@@ -1,5 +1,5 @@
 # Setup ~/.pbrc:
-pbconfurl lintel = git://gitolite@git.u.hpl.hp.com/simpl/dist/lintel
+pbconfurl lintel = file://home/anderse/.git/eric-lintel-pb-conf
 pbdefdir default = $ENV{HOME}/cache-project-builder
 vmpath default = $ENV{HOME}/cache-project-builder/qemu
 vepath default = $ENV{HOME}/cache-project-builder/chroot
@@ -9,3 +9,5 @@ vepath default = $ENV{HOME}/cache-project-builder/chroot
 pb -p lintel -r 0.2012.02.28 newproj lintel
 
 edit .../Lintel.pb
+changes in 781b5c0
+Create an origin remote and push to there.

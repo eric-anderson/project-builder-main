@@ -355,12 +355,13 @@ if ($scheme =~ /^svn/) {
 	close(HGRC);
 	chomp($res);
 } elsif ($scheme =~ /^git/) {
-	open(GITRC,".git/gitrc/") || return("");
-	while (<GITRC>) {
-		($void,$res) = split(/^default.*=/) if (/^default.*=/);
-	}
-	close(GITRC);
-	chomp($res);
+        open(my $pipe, "git --git-dir=$dir/.git remote -v |") || return("");
+        while (<$pipe>) {
+                next unless /^origin\s+(\S+) \(push\)$/;
+                return $1;
+        }
+        warn "Unable to find origin remote for $dir";
+        return "";
 } elsif ($scheme =~ /^cvs/) {
 	# This path is always the root path of CVS, but we may be below
 	open(FILE,"$dir/CVS/Root") || die "$dir isn't CVS controlled";
