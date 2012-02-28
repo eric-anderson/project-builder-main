@@ -12,6 +12,7 @@
 package ProjectBuilder::CMS;
 
 use strict 'vars';
+use Carp 'confess';
 use Data::Dumper;
 use English;
 use File::Basename;
@@ -57,7 +58,6 @@ It sets up environement variables (PBPROJDIR, PBDIR, PBREVISION, PBCMSLOGFILE)
 =cut
 
 sub pb_cms_init {
-
 my $pbinit = shift || undef;
 my $param = shift || undef;
 
@@ -489,6 +489,8 @@ my $vcscmd = pb_cms_cmd($scheme);
 
 if (($scheme =~ /^svn/) || ($scheme =~ /^cvs/) || ($scheme =~ /^svk/)) {
 	pb_system("$vcscmd up $dir","Updating $dir ");
+} elsif ($scheme =~ /^((hg)|(git))/o) {
+        pb_system("(cd $dir && $vcscmd pull)", "Updating $dir ");
 } elsif (($scheme eq "flat") || ($scheme eq "ftp") || ($scheme eq "http"))   {
 } else {
 	die "cms $scheme unknown";
@@ -515,7 +517,10 @@ my $msg = "updated to $ver";
 $msg = "Project $ENV{PBPROJ} creation" if (defined $pbinit);
 
 if (($scheme =~ /^svn/) || ($scheme =~ /^cvs/) || ($scheme =~ /^svk/)) {
-	pb_system("cd $dir ; $vcscmd ci -m \"$msg\" .","Checking in $dir ");
+	pb_system("cd $dir && $vcscmd ci -m \"$msg\" .","Checking in $dir ");
+} elsif ($scheme =~ /^git/) {
+        pb_system("cd $dir && $vcscmd commit -a -m \"$msg\"", "Checking in $dir ");
+# TODO: hg
 } elsif (($scheme eq "flat") || ($scheme eq "ftp") || ($scheme eq "http"))   {
 } else {
 	die "cms $scheme unknown";
@@ -536,7 +541,7 @@ my $scheme = shift;
 my $f = shift;
 my $vcscmd = pb_cms_cmd($scheme);
 
-if (($scheme =~ /^svn/) || ($scheme =~ /^cvs/) || ($scheme =~ /^svk/)) {
+if ($scheme =~ /^((hg)|(git)|(svn)|(svk)|(cvs))/) {
 	pb_system("$vcscmd add $f","Adding $f to VCS ");
 } elsif (($scheme eq "flat") || ($scheme eq "ftp") || ($scheme eq "http"))   {
 } else {

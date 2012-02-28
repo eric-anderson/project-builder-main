@@ -1,0 +1,11 @@
+# Setup ~/.pbrc:
+pbconfurl lintel = git://gitolite@git.u.hpl.hp.com/simpl/dist/lintel
+pbdefdir default = $ENV{HOME}/cache-project-builder
+vmpath default = $ENV{HOME}/cache-project-builder/qemu
+vepath default = $ENV{HOME}/cache-project-builder/chroot
+
+# initialize the project; the second lintel controls a name inside the ~pbdefdir/lintel directory
+# expect lots of errors from your vcs
+pb -p lintel -r 0.2012.02.28 newproj lintel
+
+edit .../Lintel.pb
