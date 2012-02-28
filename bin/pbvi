@@ -1,0 +1,3 @@
+#!/bin/bash
+export LANGUAGE=C
+gvim `egrep -r $* . | egrep -v '\.svn|~:|^Binary[\t ]|/CVS/' | cut -d: -f1 | sort -u`

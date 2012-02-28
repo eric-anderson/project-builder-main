@@ -1,0 +1,62 @@
+#!/bin/bash
+
+(
+if [ _"$1" == _"" ]; then
+	echo "Syntax: newpbqemu VM|all"
+	exit -1
+fi
+
+export PBPROJ=pb
+export PBROOT=/users/bruno/pb/svn/devel
+
+if [ _"$1" == _"all" ]; then
+	opt="`grep vmlist  $PBROOT/pbconf/pb.pb | grep pb | cut -d= -f2 | sed 's/,/ /g'`"
+	opt64="`echo $opt | sed 's/ /_64 /g'`"
+	opt="$opt $opt64"
+else
+	opt="`echo $* | sed 's/,/ /g'`"
+fi
+
+echo "Working on VMs: $opt"
+for m in $opt; do
+	echo "Launching script on $m"
+	cat > /tmp/pbscript << EOF
+	ntpdate ntp.home.musique-ancienne.org
+	rm -rf project-builder-*
+	wget --passive-ftp ftp://ftp.mondorescue.org/src/project-builder-latest.tar.gz
+	tar xvfz project-builder-latest.tar.gz
+	cd project-builder-*
+	perl Makefile.PL
+	make
+	make install
+	cd ..
+EOF
+	pb -m $m -a root -s /tmp/pbscript script2vm 
+	pb -m $m build2vm
+	echo "Installing package on $m"
+	cat > /tmp/pbscript << EOF
+	#!/bin/bash
+	ddir=\`pbdistrocheck | cut -d: -f2 | cut -d, -f1\`
+	dver=\`pbdistrocheck | cut -d, -f2\`
+	dtype=\`pbdistrocheck | cut -d, -f4\`
+	dsuf=\`pbdistrocheck | cut -d, -f5\`
+	pbver=devel
+	if [ "$dtype" = "rpm" ]; then
+		rpm -Uvh --force --nodeps ftp://ftp.project-builder.org/$ddir/$dver/test/project-builder-$pbver-1$dsuf.noarch.rpm"
+	else
+		wget ftp://ftp.project-builder.org/$ddir/$dver/test/project-builder_".$pbver."_all.deb
+		dpkg -i project-builder_".$pbver."_all.deb"
+	fi
+EOF
+	pb -m $m -a root -s /tmp/pbscript script2vm 
+	echo "Halting $m"
+	echo "/sbin/halt -p" > /tmp/pbscript
+	pb -m $m -a root -s /tmp/pbscript script2vm 
+	sleep 120
+	job=`ps auhxww | grep qemu | grep $m | grep -Ev 'grep|newpbqemu' | awk '{print $2}'`
+	if [ _"$job" != _"" ]; then
+		echo "Really halting $m"
+		kill $job
+	fi
+done
+) 2>&1 | tee /tmp/newpbqemu.log

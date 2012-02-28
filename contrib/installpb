@@ -1,0 +1,24 @@
+#!/usr/bin/perl -w
+
+# Script to be used as pbscript to install pb in VMs
+
+use strict;
+use File::Basename;
+use ProjectBuilder::Distribution qw (pb_distro_init);
+
+# To adapt
+my $pbver= "devel";
+
+my ($ddir, $dver, $dfam, $dtype, $dos, $dsuf) = pb_distro_init(); 
+
+print "distro tuple: ".join(',',($ddir, $dver, $dfam, $dtype, $dsuf))."\n";
+
+# Get and install pb
+if ( $dtype eq "rpm" ) {
+	system "sudo rpm -Uvh --force --nodeps ftp://ftp.project-builder.org/$ddir/$dver/test/project-builder-$pbver-1$dsuf.noarch.rpm"
+} elsif ( $dtype eq "deb" ) {
+		system "wget ftp://ftp.project-builder.org/$ddir/$dver/test/project-builder_".$pbver."_all.deb ; sudo dpkg -i project-builder_".$pbver."_all.deb";
+} elsif ( $dfam eq "gen" ) {
+} else {
+	print "No pkg to install\n";
+}

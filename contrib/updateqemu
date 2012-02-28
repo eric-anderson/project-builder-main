@@ -1,0 +1,35 @@
+#!/bin/bash
+
+(
+if [ _"$1" == _"" ]; then
+	echo "Syntax: updateqemu VM|all"
+	exit -1
+fi
+if [ _"$1" == _"all" ]; then
+	opt="`grep vmlist  ~/.pbrc | grep mondorescue | cut -d= -f2 | sed 's/,/ /g'`"
+	opt64="`echo $opt | sed 's/ /_64 /g'`"
+	#opt="$opt $opt64"
+	opt="$opt64"
+else
+	opt="`echo $* | sed 's/,/ /g'`"
+fi
+
+export PBPROJ=pb
+export PBROOT=/users/bruno/pb/svn/devel
+
+for m in $opt; do
+	cat /users/bruno/pb/svn/devel/pb/contrib/pbsetupqemu /users/bruno/pb/svn/devel/pb/lib/ProjectBuilder/Distribution.pm > /tmp/pbscript
+	echo "Launching script on $m"
+	pb -m $m -a root -s /tmp/pbscript script2vm 
+	pb -m $m build2vm
+	echo "Halting $m"
+	echo "/sbin/halt -p" > /tmp/pbscript
+	#pb -m $m -a root -s /tmp/pbscript script2vm 
+	sleep 120
+	job=`ps auhxww | grep qemu | grep $m | grep -Ev 'grep|updateqemu' | awk '{print $2}'`
+	if [ _"$job" != _"" ]; then
+		echo "Really halting $m"
+		#kill $job
+	fi
+done
+) 2>&1 | tee /tmp/updateqemu.log

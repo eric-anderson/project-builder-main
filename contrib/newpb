@@ -1,0 +1,9 @@
+#!/usr/bin/perl -w
+
+# Script to be used as pbscript to install latest pb version
+# missing pb account on the QEMU VM, and adds it to sudo
+
+use strict;
+
+system "ntpdate ntp.home.musique-ancienne.org ; rm -rf project-builder-* ; wget --passive-ftp ftp://ftp.mondorescue.org/src/project-builder-latest.tar.gz ; tar xvfz project-builder-latest.tar.gz ; cd project-builder-* ; perl Makefile.PL ; make ; sudo make install ; cd .. ; sudo halt -p ; sleep 120";
+

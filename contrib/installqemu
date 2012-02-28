@@ -1,0 +1,33 @@
+#!/bin/bash
+
+(
+export PBPROJ=pb
+VER=devel
+export PBROOT=/users/bruno/pb/svn/$VER
+
+if [ _"$1" == _"" ]; then
+	echo "Syntax: installqemu VM|all"
+	exit -1
+fi
+if [ _"$1" == _"all" ]; then
+	opt="`grep vmlist  $PBROOT/pbconf/$PBPROJ.pb | grep $PBPROJ | cut -d= -f2 | sed 's/,/ /g'`"
+	opt64="`echo $opt | sed 's/ /_64 /g'`"
+	opt="$opt $opt64"
+else
+	opt="`echo $* | sed 's/,/ /g'`"
+fi
+
+for m in $opt; do
+	echo "Launching script on $m"
+	pb -m $m -a root -s /users/bruno/pb/svn/$VER/pb/contrib/installpb script2vm 
+	echo "Halting $m"
+	echo "/sbin/halt -p" > /tmp/pbscript
+	pb -m $m -a root -s /tmp/pbscript script2vm 
+	sleep 120
+	job=`ps auhxww | grep qemu | grep -Ev 'grep|installqemu' | awk '{print $2}'`
+	if [ _"$job" != _"" ]; then
+		echo "Really halting $m"
+		kill $job
+	fi
+done
+) 2>&1 | tee /tmp/installqemu.log
