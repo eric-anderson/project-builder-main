@@ -826,7 +826,7 @@ if (! -f "$dest/ChangeLog") {
 		open(CL,"> $dest/ChangeLog") || die "Unable to create $dest/ChangeLog";
 		close(CL);
 		my $command = pb_check_req("svn2cl",1);
-		if (-x $command) {
+		if ((defined $command) && (-x $command)) {
 			pb_system("$command --group-by-day --authors=$authors -i -o $dest/ChangeLog $pkgdir","Generating ChangeLog from SVN with svn2cl");
 		} else {
 			# To be written from pbcl

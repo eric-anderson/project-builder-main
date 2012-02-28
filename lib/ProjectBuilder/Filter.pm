@@ -19,6 +19,8 @@ use File::Copy;
 use lib qw (lib);
 use ProjectBuilder::Version;
 use ProjectBuilder::Base;
+use ProjectBuilder::Conf;
+use ProjectBuilder::Distribution;
 use ProjectBuilder::Changelog;
 
 # Inherit from the "Exporter" module which handles exporting functions.
@@ -214,9 +216,10 @@ while (<FILE>) {
 			pb_log(3,"DEBUG($tuple) filtering PBPATCHCMD\n");
 			my $i = 0;
 			if (defined $pb->{'patches'}->{$tuple}) {
+				my ($patchcmd,$patchopt) = pb_distro_get_param($pb->{'pbos'},pb_conf_get_if("ospatchcmd","ospatchopt"));
 				foreach my $p (split(/,/,$pb->{'patches'}->{$tuple})) {
 					pb_log(3,"DEBUG($tuple) Adding patch command $i\n");
-					print DEST "%patch$i -p1\n";
+					print DEST "%patch$i $patchopt\n";
 					$i++;
 				}
 			}

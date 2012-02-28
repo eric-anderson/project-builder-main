@@ -35,6 +35,7 @@ use ProjectBuilder::CMS;
 use ProjectBuilder::Env;
 use ProjectBuilder::Filter;
 use ProjectBuilder::Changelog;
+use ProjectBuilder::VE;
 
 # Global variables
 my %opts;					# CLI Options
@@ -42,6 +43,7 @@ my $action;					# action to realize
 my $test = "FALSE";			# Not used
 my $pbforce = 0;			# Force VE/VM rebuild
 my $pbsnap = 0;				# Do not use snapshot mode for VM/VE by default
+my $pbkeep = 0;				# keep temporary directory at the end
 my $option = "";			# Not used
 my @pkgs;					# list of packages
 my $pbtag;					# Global Tag variable
@@ -51,7 +53,7 @@ my %pbver;					# per package
 my %pbtag;					# per package
 my $pbrev;					# Global REVISION variable
 my $pbaccount;				# Login to use to connect to the VM/RM
-my $pbtarget;				# Target os-ver-arch you want to build for
+my $pbtarget = undef;		# Target os-ver-arch you want to build for
 my $pbport;					# Port to use to connect to the VM/RM
 my $newver;					# New version to create
 my $iso = undef;			# ISO image for the VM to create
@@ -77,9 +79,9 @@ if you could also have multiple .spec files if required.
 
 =head1 SYNOPSIS
 
-pb [-vhSq][-r pbroot][-p project][[-s script -a account -P port][-t os-ver-arch][-m os-ver-arch[,...]]][-g][-i iso] <action> [<pkg1> ...]
+pb [-vhSq][-r pbroot][-p project][[-s script -a account -P port][-t [os-ver-arch]][-m os-ver-arch[,...]]][-g][-i iso] <action> [<pkg1> ...]
 
-pb [--verbose][--help][--man][--quiet][--snapshot][--revision pbroot][--project project][[--script script --account account --port port][--target os-ver-arch][--machine os-ver-arch[,...]]][--nographic][--iso iso] <action> [<pkg1> ...]
+pb [--verbose][--help][--man][--quiet][--snapshot][--revision pbroot][--project project][[--script script --account account --port port][--target [os-ver-arch]][--machine os-ver-arch[,...]]][--nographic][--iso iso][--rebuild] <action> [<pkg1> ...]
 
 =head1 OPTIONS
 
@@ -147,6 +149,14 @@ Path Name of the project revision under the CMS (or use the env variable PBROOT)
 =item B<-V|--version new_version>
 
 New version of the project to create based on the current one.
+
+=item B<-k|--keep>
+
+Keep the temporary dir where files have been created in or der to help debug
+
+=item B<--rebuild>
+
+Only valid with the checkssh action, it alllows to automatically relaunch the build of the failed packages
 
 =back 
 
@@ -334,6 +344,10 @@ Test a package in a virtual environment
 
 Test a package in a remote machine
 
+=item B<checkssh>
+
+Check the delivery of the packages on the repository
+
 =item B<newver>
 
 Create a new version of the project derived
@@ -371,6 +385,12 @@ Create tar files for the website under your CMS.
 =item B<clean>
 
 Purge the build and delivery directories related to the current project
+
+=back 
+
+=item B<cleanssh>
+
+Purge the ssh server of its packages (only for testver and test packages)
 
 =back 
 
@@ -467,12 +487,14 @@ GetOptions("help|?|h" => \$opts{'h'},
 		"revision|r=s" => \$opts{'r'},
 		"script|s=s" => \$opts{'s'},
 		"machines|mock|m=s" => \$opts{'m'},
-		"target|t=s" => \$opts{'t'},
+		"target|t:s" => \$opts{'t'},
 		"nographic|g" => \$opts{'g'},
 		"port|P=i" => \$opts{'P'},
 		"project|p=s" => \$opts{'p'},
+		"rebuild" => \$opts{'rebuild'},
 		"iso|i=s" => \$opts{'i'},
 		"version|V=s" => \$opts{'V'},
+		"keep|k" => \$opts{'k'},
 ) || pb_syntax(-1,0);
 
 if (defined $opts{'h'}) {
@@ -492,6 +514,9 @@ if (defined $opts{'q'}) {
 }
 if (defined $opts{'S'}) {
 	$pbsnap=1;
+}
+if (defined $opts{'k'}) {
+	$pbkeep=1;
 }
 if (defined $opts{'l'}) {
 	open(pbLOG,"> $opts{'l'}") || die "Unable to log to $opts{'l'}: $!";
@@ -539,7 +564,7 @@ $pbinit = 1 if ($action =~ /^newproj$/);
 
 # Handles project name if any
 # And get global params
-($filteredfiles, $supfiles, $defpkgdir, $extpkgdir) = pb_env_init($opts{'p'},$pbinit,$action);
+($filteredfiles, $supfiles, $defpkgdir, $extpkgdir) = pb_env_init($opts{'p'},$pbinit,$action,$pbkeep);
 
 #
 # Check for command requirements
@@ -695,7 +720,11 @@ if ($action =~ /^cms2build$/) {
 	require DBI;
 	require DBD::SQLite;
 
-	pb_announce();
+	pb_announce("Announce");
+} elsif ($action =~ /^cleanssh$/) {
+	pb_announce("Clean");
+} elsif ($action =~ /^checkssh$/) {
+	pb_announce("Check");
 } elsif ($action =~ /^sbx2webpkg$/) {
 	require DBI;
 	require DBD::SQLite;
@@ -842,6 +871,7 @@ sub pb_cms2build {
 		my %build;
 		# We want to at least build for the underlying distro
 		# except if a target was given, in which case we only build for it
+		# if -t was passed without target then build for the native distro.
 		my $pbos = pb_distro_get_context($pbtarget);
 		my $tmpl = pb_get_distros($pbos,$pbtarget);
 
@@ -879,8 +909,7 @@ sub pb_cms2build {
 			}
 
 			# Try to use // processing here
-			my $pm;
-			$pm = new Parallel::ForkManager($pbparallel) if (defined $pbparallel);
+			my $pm = new Parallel::ForkManager($pbparallel) if (defined $pbparallel);
 
 			pb_log(0,"Preparing delivery ...\n");
 			foreach my $v (keys %virt) {
@@ -912,21 +941,30 @@ sub pb_cms2build {
 				my %pkgfiles = ();
 				# Used in Filter.pm by pb_filter_file
 
-				$build{$v} = "yes";
+				$build{$v} = "no";
 				if (-d "$ENV{'PBROOTDIR'}/$pbpkg/$pbos->{'os'}") {
 					pb_list_bfiles("$ENV{'PBROOTDIR'}/$pbpkg/$pbos->{'os'}",$pbpkg,\%bfiles,\%pkgfiles,$supfiles);
-				} elsif (-d "$ENV{'PBROOTDIR'}/$pbpkg/$pbos->{'type'}") {
+					$build{$v} = "yes";
+				} 
+				if (-d "$ENV{'PBROOTDIR'}/$pbpkg/$pbos->{'type'}") {
 					pb_list_bfiles("$ENV{'PBROOTDIR'}/$pbpkg/$pbos->{'type'}",$pbpkg,\%bfiles,\%pkgfiles,$supfiles);
-				} elsif (-d "$ENV{'PBROOTDIR'}/$pbpkg/$pbos->{'family'}") {
+					$build{$v} = "yes";
+				} 
+				if (-d "$ENV{'PBROOTDIR'}/$pbpkg/$pbos->{'family'}") {
 					pb_list_bfiles("$ENV{'PBROOTDIR'}/$pbpkg/$pbos->{'family'}",$pbpkg,\%bfiles,\%pkgfiles,$supfiles);
-				} elsif (-d "$ENV{'PBROOTDIR'}/$pbpkg/$pbos->{'name'}") {
+					$build{$v} = "yes";
+				} 
+				if (-d "$ENV{'PBROOTDIR'}/$pbpkg/$pbos->{'name'}") {
 					pb_list_bfiles("$ENV{'PBROOTDIR'}/$pbpkg/$pbos->{'name'}",$pbpkg,\%bfiles,\%pkgfiles,$supfiles);
-				} elsif (-d "$ENV{'PBROOTDIR'}/$pbpkg/$pbos->{'name'}-$pbos->{'version'}") {
+					$build{$v} = "yes";
+				} 
+				if (-d "$ENV{'PBROOTDIR'}/$pbpkg/$pbos->{'name'}-$pbos->{'version'}") {
 					pb_list_bfiles("$ENV{'PBROOTDIR'}/$pbpkg/$pbos->{'name'}-$pbos->{'version'}",$pbpkg,\%bfiles,\%pkgfiles,$supfiles);
-				} elsif (-d "$ENV{'PBROOTDIR'}/$pbpkg/$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'}") {
+					$build{$v} = "yes";
+				} 
+				if (-d "$ENV{'PBROOTDIR'}/$pbpkg/$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'}") {
 					pb_list_bfiles("$ENV{'PBROOTDIR'}/$pbpkg/$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'}",$pbpkg,\%bfiles,\%pkgfiles,$supfiles);
-				} else {
-					$build{$v} = "no";
+					$build{$v} = "yes";
 				}
 				pb_log(2,"DEBUG($v) bfiles: ".Dumper(\%bfiles)."\n");
 	
@@ -944,12 +982,30 @@ sub pb_cms2build {
 					if (defined $pb->{'patches'}->{$v}) {
 						# Filter potential patches (local + remote)
 						pb_mkdir_p("$dest/pbconf/$v/pbpatch");
+						# If Debian based distribution, then prepare what will be done at build time
+						my ($patchcmd,$patchopt);
+						if ($pbos->{'type'} eq "deb") {
+							($patchcmd,$patchopt) = pb_distro_get_param($pbos,pb_conf_get_if("ospatchcmd","ospatchopt"));
+							open(SCRIPT,"> $dest/pbconf/$v/pbpatch/pbapplypatch") || die "Unable to create $dest/pbconf/$v/pbpatch/pbapplypatch";
+							print SCRIPT "#!/bin/bash\n";
+							print SCRIPT "set -x\n" if ($pbdebug gt 1);
+						}
 						foreach my $pf (split(/,/,$pb->{'patches'}->{$v})) {
 							my $pp = basename($pf);
 							pb_cms_export($pf,undef,"$dest/pbconf/$v/pbpatch");
 							pb_filter_file_inplace($ptr,"$dest/pbconf/$v/pbpatch/$pp",$pb);
 							pb_system("gzip -9f $dest/pbconf/$v/pbpatch/$pp","","quiet");
+							if ($pbos->{'type'} eq "deb") {
+								# If Debian based distribution, then prepare what will be done at build time
+								# by applying the patches that will be available under the debian/patches dir
+								print SCRIPT "$patchcmd $patchopt \< debian/patches/$pp\n";
+							}
 						}
+						if ($pbos->{'type'} eq "deb") {
+							close(SCRIPT);
+							chmod 0755,"$dest/pbconf/$v/pbpatch/pbapplypatch";
+						}
+						#pb_system("cat $dest/pbconf/$v/pbpatch/pbapplypatch","APPLY","verbose");
 					}
 					if (defined $pb->{'sources'}->{$v}) {
 						pb_mkdir_p("$dest/pbconf/$v/pbsrc");
@@ -960,8 +1016,11 @@ sub pb_cms2build {
 						}
 					}
 					# Filter build files at the end, as they depend on patches and sources
-					foreach my $f (values %bfiles,values %pkgfiles) {
-						pb_filter_file("$ENV{'PBROOTDIR'}/$f",$ptr,"$dest/pbconf/$v/".basename($f),$pb);
+					foreach my $f (keys %bfiles) {
+						pb_filter_file("$ENV{'PBROOTDIR'}/$bfiles{$f}",$ptr,"$dest/pbconf/$v/$f",$pb);
+					}
+					foreach my $f (keys %pkgfiles) {
+						pb_filter_file("$ENV{'PBROOTDIR'}/$pkgfiles{$f}",$ptr,"$dest/pbconf/$v/$f",$pb);
 					}
 				}
 
@@ -1246,6 +1305,49 @@ sub pb_build2pkg {
 			symlink "pbconf/$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'}","debian" || die "Unable to symlink to pbconf/$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'}";
 			chmod 0755,"debian/rules";
 
+			# We need to handle potential patches to upstream sources
+			pb_mkdir_p("debian/patches");
+			my @f = pb_extract_build_files($src2,"$pbpkg-$pbver/pbconf/$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'}/pbpatch/","debian/patches","patch");
+
+			# By default we use format 1.0 - Cf man dpkg-source
+			my $debsrcfmt = "1.0";
+			my $debsrcfile = "debian/source/format";
+			if (-f $debsrcfile) {
+				$debsrcfmt = pb_get_content($debsrcfile);
+			}
+				
+			if ($debsrcfmt =~ /^3.*quilt/) {
+				# If we use quilt to manage patches, we then setup the env correctly 
+				# as per http://pkg-perl.alioth.debian.org/howto/quilt.html
+				# Generate Debian patch series for quilt
+				open(SERIE,"> debian/patches/series") || die "Unable to write in debian/patches/series";
+				$ENV{'QUILT_PATCHES'}="debian/patches";
+			} else {
+				# If we use dpatch to manage patches, we then setup the 00list file as well
+				open(SERIE,"> debian/patches/00list") || die "Unable to write in debian/patches/00list";
+			}
+			foreach my $f (sort @f) {
+				# Skip the script made to apply the patches to the Debian tree
+				next if ($f =~ /pbapplypatch/);
+				# We also need to uncompress them
+				pb_system("gzip -d $f","","quiet");
+				$f =~ s/\.gz$//;
+				print SERIE "$f\n";
+			}
+			close(SERIE);
+			if ($debsrcfmt =~ /^1.*/) {
+				# In that case we need to apply the patches ourselves locally
+				pb_system("cat debian/patches/pbapplypatch","APPLY","verbose");
+				pb_system("debian/patches/pbapplypatch","Applying patches to $pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'} tree");
+			}
+			if (@f) {
+				# We have patches, so modify the name of files to be Debian compliant
+				move("../$src","../$pbpkg-$pbver.orig.tar.gz");
+			}
+
+			# We need to handle potential additional sources to upstream sources
+			#pb_extract_build_files($src2,"$pbpkg-$pbver/pbconf/$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'}/pbsrc/","$ENV{'PBBUILDDIR'}/debian","src");
+
 			pb_distro_installdeps("debian/control",$pbos);
 			pb_system("dpkg-buildpackage -us -uc -rfakeroot","Building package","verbose");
 			# Get the name of the generated packages
@@ -1259,7 +1361,7 @@ sub pb_build2pkg {
 			}
 			close(LOG);
 			chdir ".." || die "Unable to chdir to parent dir";
-			pb_system("rm -rf $pbpkg-$pbver", "Cleanup");
+			pb_rm_rf("$pbpkg-$pbver");
 		} elsif ($pbos->{'type'} eq "ebuild") {
 			my @ebuildfile;
 			# For gentoo we need to take pb as subsystem name
@@ -1333,7 +1435,7 @@ sub pb_build2pkg {
 				pb_system("sudo /sbin/makepkg -p -l y -c y $pbpkg","Packaging $pbpkg","verbose");
 			}
 			chdir ".." || die "Unable to chdir to parent dir";
-			pb_system("rm -rf $pbpkg-$pbver", "Cleanup");
+			pb_rm_rf("$pbpkg-$pbver");
 		} elsif ($pbos->{'type'} eq "pkg") {
 			# Solaris
 			$made="$made $pbpkg-$pbver-$pbtag.pkg.gz";
@@ -1377,7 +1479,7 @@ sub pb_build2pkg {
 				pb_log(0,"No pbconf/$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'}/pbbuild file found for $pbpkg-$pbver in \n");
 			}
 			chdir ".." || die "Unable to chdir to parent dir";
-			pb_system("rm -rf $pbpkg-$pbver $ENV{'PBBUILDDIR'}/$pbos->{'type'} $pkgdestdir", "Cleanup");
+			pb_rm_rf("$pbpkg-$pbver","$ENV{'PBBUILDDIR'}/$pbos->{'type'}","$pkgdestdir");
 		} elsif ($pbos->{'type'} eq "hpux") {
 			# HP-UX
 			pb_system("tar xfz $src","Extracting sources");
@@ -1398,7 +1500,7 @@ sub pb_build2pkg {
 			$made="$made $pbpkg-$pbver-$pbtag.sd";
 
 			chdir ".." || die "Unable to chdir to parent dir";
-			pb_system("rm -rf $pbpkg-$pbver", "Cleanup");
+			pb_rm_rf("$pbpkg-$pbver");
 		} else {
 			die "Unknown OS type format $pbos->{'type'}";
 		}
@@ -1482,6 +1584,7 @@ sub create_solaris_prototype {
 
 sub pb_build2ssh {
 	pb_send2target("Sources");
+	pb_send2target("CPAN");
 }
 
 sub pb_pkg2ssh {
@@ -1533,9 +1636,15 @@ sub pb_send2target {
 		$login = "websshlogin";
 		$dir = "websshdir";
 		$port = "websshport";
+	} elsif ($cmt eq "CPAN") {
+		$host = "cpanpause";
+		$login = "";
+		$dir = "cpandir";
+		$port = "";
 	}
 	my $cmd = "";
 	my $src = "";
+	my $cpanpkg = 0;
 	my $pbos;
 
 	if ($cmt ne "Announce") {
@@ -1546,7 +1655,6 @@ sub pb_send2target {
 		# Get the running distro to consider
 		$pbos = pb_distro_get_context($v);
 
-		# Get list of packages to build
 		# Get content saved in cms2build
 		my ($pkg) = pb_conf_read("$ENV{'PBDESTDIR'}/$ENV{'PBPROJVER'}-$ENV{'PBPROJTAG'}.pb","pbpkg");
 		$pkg = { } if (not defined $pkg);
@@ -1568,9 +1676,24 @@ sub pb_send2target {
 			} elsif ($cmt eq "Web") {
 				$src = "$src $ENV{'PBDESTDIR'}/$pbpkg-$pbver.tar.gz"
 			}
+
+			# Do we have one perl package
+			my @nametype = pb_conf_get_if("namingtype");
+			my $type = $nametype[0]->{$pbpkg};
+			if ((defined $type) && ($type eq "perl")) {
+				$cpanpkg = 1;
+			}
 		}
 		# Adds conf file for availability of conf elements
 		pb_conf_add("$ENV{'PBROOTDIR'}/$ENV{'PBPROJ'}.pb");
+	}
+	my ($rbsconf,$testver,$delivery) = pb_conf_get_if($conf,"testver","delivery");
+	if ($cmt =~ /CPAN/) {
+		# Do not deliver on Pause if this is a test version
+		return if (not defined $testver);
+		return if ($testver =~ /true/);
+		# Do not deliver on Pause if this is not a perl package
+		return if ($cpanpkg == 0);
 	}
 
 	if ($cmt =~ /(V[EM]|RM)build/) {
@@ -1579,7 +1702,7 @@ sub pb_send2target {
 		$src="$src $ENV{'PBDESTDIR'}/pbscript.$$";
 	} elsif ($cmt =~ /(V[EM]|RM)test/) {
 		$src="$src $ENV{'PBROOTDIR'}/$ENV{'PBPROJ'}.pb $ENV{'PBDESTDIR'}/$ENV{'PBPROJVER'}-$ENV{'PBPROJTAG'}.pb $ENV{'PBETC'} $ENV{'PBDESTDIR'}/pbrc $ENV{'PBDESTDIR'}/pbscript.$$ $ENV{'PBDESTDIR'}/pbtest";
-	} elsif (($cmt eq "Announce") || ($cmt eq "Web")) {
+	} elsif (($cmt eq "Announce") || ($cmt eq "Web") || ($cmt eq "CPAN")) {
 		$src="$src $ENV{'PBTMP'}/pbscript";
 	} elsif ($cmt eq "Packages") {
 		# Get package list from file made during build2pkg
@@ -1589,7 +1712,7 @@ sub pb_send2target {
 		close(KEEP);
 		$src = "$src $ENV{'PBBUILDDIR'}/pbscript.$$";
 	}
-	if (($cmt eq "Sources") || ($cmt eq "Packages")) {
+	if (($cmt eq "Sources") || ($cmt eq "Packages") || ($cmt eq "CPAN")) {
 		my ($pbpackager) = pb_conf_get("pbpackager");
 		$ENV{'PBPACKAGER'} = $pbpackager->{$ENV{'PBPROJ'}};
 		pb_log(0,"Exporting public key for $ENV{'PBPACKAGER'}\n");
@@ -1609,7 +1732,6 @@ sub pb_send2target {
 	pb_log(2,"values: ".Dumper(($host,$login,$dir,$port,$tmout,$path,$conf))."\n");
 	my ($sshhost,$sshlogin,$sshdir,$sshport) = pb_conf_get($host,$login,$dir,$port);
 	# Not mandatory...
-	my ($rbsconf,$testver,$delivery) = pb_conf_get_if($conf,"testver","delivery");
 	$delivery->{$ENV{'PBPROJ'}} = "" if (not defined $delivery->{$ENV{'PBPROJ'}});
 	my ($vtmout,$vepath);
 	# ...Except those in virtual context
@@ -1645,6 +1767,8 @@ sub pb_send2target {
 	my $bdir;
 	if (($cmt eq "Sources") || ($cmt =~ /(V[EM]|RM)Script/)) {
 		$tdir = "$remdir/$delivery->{$ENV{'PBPROJ'}}/src";
+	} elsif ($cmt eq "CPAN") {
+		$tdir = "$remdir";
 	} elsif ($cmt =~ /(V[EM]|RM)(build|test)/) {
 		$tdir = $remdir."/$ENV{'PBPROJ'}/delivery";
 		$bdir = $remdir."/$ENV{'PBPROJ'}/build";
@@ -1687,6 +1811,7 @@ name=$pbos->{'name'} $pbos->{'version'} $pbos->{'arch'} - $ENV{'PBPROJ'} Vanilla
 baseurl=$pbrepo->{$ENV{'PBPROJ'}}/$repodir
 enabled=1
 gpgcheck=1
+gpgkey=$pbrepo->{$ENV{'PBPROJ'}}/$repodir/$ENV{'PBPROJ'}.pubkey
 EOT
 chmod 644 $ENV{'PBPROJ'}.repo
 
@@ -1698,6 +1823,11 @@ if [ -x /usr/bin/yum-arch ]; then
 fi
 # Create repodata
 createrepo -s $pbsha .
+# Link to the key
+(cd repodata ; ln -sf ../$ENV{'PBPROJ'}.pubkey repomd.xml.key)
+# sign the repomd (at least useful for SLES - which requires a local key)
+# gpg -a --detach-sign repodata/repomd.xml
+# SLES also looks for media.1/info.txt
 EOF
 			if ($pbos->{'family'} eq "md") {
 				# For Mandriva add urpmi management
@@ -1784,6 +1914,8 @@ EOF
 			my $debarch = $pbos->{'arch'};
 			$debarch = "amd64" if ($pbos->{'arch'} eq "x86_64");
 			my $rpd = dirname("$pbrepo->{$ENV{'PBPROJ'}}/$repodir");
+			# Remove extra . in path to fix #522
+			$rpd =~ s|/./|/|g;
 			print PBS << "EOF";
 #!/bin/bash
 # Prepare a script to ease apt setup
@@ -1821,6 +1953,9 @@ dpkg-scansources $pbos->{'version'} /dev/null | gzip -c9 > dists/$pbos->{'versio
 cat \$TMPD/Release > dists/$pbos->{'version'}/contrib/source/Release
 echo "Architecture: Source" >> dists/$pbos->{'version'}/contrib/source/Release
 echo "Creating Release metadata"
+# Signing that file would be useful but uneasy as gpg keys are not there
+# Cf: http://wiki.debian.org/SecureApt
+# Same as for repomd
 apt-ftparchive release dists/$pbos->{'version'} > dists/$pbos->{'version'}/Release
 rm -rf \$TMPD
 EOF
@@ -1856,18 +1991,10 @@ EOF
 		$tm = "sleep $vtmout" if (defined $vtmout);
 	}
 
-	# ssh communication if not VE
+	# ssh communication if not VE or CPAN
 	# should use a hash instead...
 	my ($shcmd,$cpcmd,$cptarget,$cp2target);
-	if ($cmt !~ /^VE/) {
-		my $keyfile = pb_ssh_get(0);
-		$shcmd = "ssh -i $keyfile -q -o UserKnownHostsFile=/dev/null -p $nport $mac";
-		$cpcmd = "scp -i $keyfile -p -o UserKnownHostsFile=/dev/null -P $nport";
-		$cptarget = "$mac:$tdir";
-		if ($cmt =~ /^(V|R)Mbuild/) {
-			$cp2target = "$mac:$bdir";
-		}
-	} else {
+	if ($cmt =~ /^VE/) {
 		my $tp = $vepath->{$ENV{'PBPROJ'}};
 		my $tpdir = "$tp/$pbos->{'name'}/$pbos->{'version'}/$pbos->{'arch'}";
 		my ($ptr) = pb_conf_get("vetype");
@@ -1892,11 +2019,37 @@ EOF
 			$cp2target = "$tpdir/$homedir/$bdir";
 		}
 		pb_log(2,"On VE using $cptarget as target dir to copy to\n");
+	} elsif ($cmt =~ /^CPAN/) {
+		my $ftpput = pb_check_req("ncftpput",1);
+		my $ftpget = pb_check_req("wget",1);
+		my ($cpanuser,$cpanpasswd) = pb_conf_get("cpanuser","cpanpasswd");
+		my ($cpansubdir) = pb_conf_get_if("cpansubdir");
+		$shcmd = "$ftpget --post-data \'HIDDENNAME=".$cpanuser;
+		$shcmd .= "&user=".$cpanuser;
+		$shcmd .= "&password=".$cpanpasswd;
+		$shcmd .= "&SUBMIT_pause99_add_uri_upload=\"Upload the checked files\"";
+		$shcmd .= "&pause99_add_uri_subdirtext=".$cpansubdir if (defined $cpansubdir);
+		foreach my $s (split(/ /,$src)) {
+			$shcmd .= "&pause99_add_uri_upload=".basename($s);
+		}
+		$shcmd .= "'";
+		$cpcmd = "$ftpput $host $dir";
+		$cptarget = "CPAN";
+	} else {
+		my $keyfile = pb_ssh_get(0);
+		my $sshcmd = pb_check_req("ssh",1);
+		my $scpcmd = pb_check_req("scp",1);
+		$shcmd = "$sshcmd -i $keyfile -q -o UserKnownHostsFile=/dev/null -p $nport $mac";
+		$cpcmd = "$scpcmd -i $keyfile -p -o UserKnownHostsFile=/dev/null -P $nport";
+		$cptarget = "$mac:$tdir";
+		if ($cmt =~ /^(V|R)Mbuild/) {
+			$cp2target = "$mac:$bdir";
+		}
 	}
-
+	
 	my $logres = "";
 	# Do not touch when just announcing
-	if ($cmt ne "Announce") {
+	if (($cmt ne "Announce") && ($cmt ne "CPAN")) {
 		pb_system("$shcmd \"mkdir -p $tdir ; cd $tdir ; echo \'for i in $basesrc; do if [ -f \$i ]; then rm -f \$i; fi; done\ ; $cmd' | bash\"","Preparing $tdir on $cptarget");
 	} else {
 		$logres = "> ";
@@ -1916,7 +2069,16 @@ EOF
 		$pbscript = "pbscript";
 	}
 
-	pb_system("$shcmd \"echo \'cd $tdir ; if [ -x $pbscript ]; then ./$pbscript; fi ; rm -f ./$pbscript\' | bash\"","Executing pbscript on $cptarget if needed","verbose");
+	# It's already ready for CPAN
+	my $shcmdbase = $shcmd;
+	if ($cmt !~ /^CPAN/) {
+		$shcmd .= " \"echo \'cd $tdir ; if [ -x $pbscript ]; then ./$pbscript; fi ; rm -f ./$pbscript\' | bash\"";
+	}
+	my $cmdverb = "verbose";
+	if (($cmt eq "Announce") || ($cmt eq "CPAN")) {
+		$cmdverb = undef;
+	}
+	pb_system("$shcmd","Executing pbscript on $cptarget if needed",$cmdverb);
 	if ($cmt =~ /^(V[EM]|RM)build/) {
 		# Get back info on pkg produced, compute their name and get them from the VM/RM
 		pb_system("$cpcmd $cp2target/pbgen-$ENV{'PBPROJVER'}-$ENV{'PBPROJTAG'}-$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'} $ENV{'PBBUILDDIR'}/pbgen-$ENV{'PBPROJVER'}-$ENV{'PBPROJTAG'}.$$ 2> /dev/null","Get package names in $cp2target");
@@ -1953,7 +2115,7 @@ EOF
 			}
 			print KEEP "$made\n";
 			close(KEEP);
-			pb_system("$shcmd \"rm -rf $tdir $bdir\"","$cmt cleanup");
+			pb_system("$shcmdbase \"rm -rf $tdir $bdir\"","$cmt cleanup");
 
 			# Sign packages locally
 			pb_sign_pkgs($pbos,$made);
@@ -1965,7 +2127,7 @@ EOF
 			pb_rm_rf("$ENV{'PBBUILDDIR'}/$pbos->{'name'}/$pbos->{'version'}/$pbos->{'arch'}");
 		}
 	}
-	unlink("$ENV{'PBDESTDIR'}/pbscript.$$") if (($cmt =~ /^(V[ME]|RM)/) || ($cmt =~ /Packages/));
+	unlink("$ENV{'PBDESTDIR'}/pbscript.$$") if ((($cmt =~ /^(V[ME]|RM)/) || ($cmt =~ /Packages/)) && ($pbkeep eq 0));
 
 	pb_log(2,"Before halt, vmexist: $vmexist, vmpid: $vmpid\n");
 	if ((! $vmexist) && ($cmt =~ /^VM/)) {
@@ -2001,7 +2163,7 @@ EOF
 		if ($pbos->{'type'} eq "pkg") {
 			$hoption = "" ;
 		}
-		pb_system("$shcmd \"sudo $hpath $hoption \"; $tm ; echo \'if [ -d /proc/$vmpid ]; then kill -9 $vmpid; fi \' | bash ; sleep 10","VM $v halt (pid $vmpid)");
+		pb_system("$shcmdbase \"sudo $hpath $hoption \"; $tm ; echo \'if [ -d /proc/$vmpid ]; then kill -9 $vmpid; fi \' | bash ; sleep 10","VM $v halt (pid $vmpid)");
 	}
 	if (($cmt =~ /^VE/) && ($snapme != 0)) {
 		my $tpdir = "$vepath->{$ENV{'PBPROJ'}}/$pbos->{'name'}/$pbos->{'version'}/$pbos->{'arch'}";
@@ -2067,7 +2229,7 @@ sub pb_launchv {
 	my $v = shift;
 	my $create = shift || 0;		# By default do not create a VM/VE/RM
 	my $snapme = shift || 0;		# By default do not snap a VM/VE/RM
-	my $usesnap = shift || 1;		# By default study the usage of the snapshot feature of VM/VE/RM
+	my $usesnap = shift || 1;		# By default study the usage of the snapshot feature of VM/VE/RM	
 
 	# If creation or snapshot creation mode, no snapshot usable
 	if (($create == 1) || ($snapme == 1)) {
@@ -2080,15 +2242,14 @@ sub pb_launchv {
 	$v =~ s/,.*//;
 
 	my $pbos = pb_distro_get_context($v);
-	my $arch = pb_get_arch();
-
+	
 	# Launch the VMs/VEs
 	if ($vtype eq "vm") {
 		die "-i iso parameter needed" if (((not defined $iso) || ($iso eq "")) && ($create != 0));
 
 		# TODO: vmmonport should be optional
 		my ($ptr,$ptr2,$vmpath,$vmport,$vms,$vmmonport) = pb_conf_get("vmtype","vmcmd","vmpath","vmport","vmsize","vmmonport");
-		my ($vmopt,$vmmem,$vmtmout,$vmsnap,$vmbuildtm) = pb_conf_get_if("vmopt","vmmem","vmtmout","vmsnap","vmbuildtm");
+		my ($vmopt,$vmmm,$vmtmout,$vmsnap,$vmbuildtm) = pb_conf_get_if("vmopt","vmmem","vmtmout","vmsnap","vmbuildtm");
 		my $vmsize = pb_distro_get_param($pbos,$vms);
 
 		my $vmtype = $ptr->{$ENV{'PBPROJ'}};
@@ -2115,10 +2276,9 @@ sub pb_launchv {
 		}
 
 		# How much memory to allocate for VMs
-		if (defined $vmmem->{$v}) {
-			$ENV{'PBVMOPT'} .= " -m $vmmem->{$v}";
-		} elsif (defined $vmmem->{$ENV{'PBPROJ'}}) {
-			$ENV{'PBVMOPT'} .= " -m $vmmem->{$ENV{'PBPROJ'}}";
+		my $vmmem = pb_distro_get_param($pbos,$vmmm);
+		if (defined $vmmem) {
+			$ENV{'PBVMOPT'} .= " -m $vmmem";
 		}
 
 		# Are we allowed to use snapshot feature 
@@ -2154,7 +2314,8 @@ sub pb_launchv {
 				$ENV{'PBVMOPT'} .= " -cdrom $iso -boot d";
 			}
 			# Always redirect the network and always try to use a 'pb' snapshot
-			$cmd = "$vmcmd $ENV{'PBVMOPT'} -redir tcp:$nport:10.0.2.15:22 -loadvm pb $vmm"
+			#$cmd = "$vmcmd $ENV{'PBVMOPT'} -net user,hostfwd=tcp:$nport:10.0.2.15:22 -loadvm pb $vmm"
+			$cmd = "$vmcmd $ENV{'PBVMOPT'} -redir tcp:$nport:10.0.2.15:22 $vmm"
 		} elsif ($vmtype eq "xen") {
 		} elsif ($vmtype eq "vmware") {
 		} else {
@@ -2207,172 +2368,8 @@ sub pb_launchv {
 		pb_log(2,"DEBUG: pb_launchv returns ($vmexist,$vmpid)\n");
 		return($vmexist,$vmpid);
 	} elsif ($vtype eq "ve") {
-		# VE here
-		# Get distro context
-		my $pbos = pb_distro_get_context($v);
-
-		# Get VE context
-		my ($ptr,$vepath) = pb_conf_get("vetype","vepath");
-		my $vetype = $ptr->{$ENV{'PBPROJ'}};
-
-		# We can probably only get those params now we have the distro context
-		my ($rbsb4pi,$rbspi,$vesnap,$oscodename,$osmindep,$verebuild,$rbsmirrorsrv) = pb_conf_get_if("rbsb4pi","rbspi","vesnap","oscodename","osmindep","verebuild","rbsmirrorsrv");
-
-		# We need to avoid umask propagation to the VE
-		umask 0022;
-
-		if (($vetype eq "chroot") || ($vetype eq "schroot")) {
-			# Architecture consistency
-			if ($arch ne $pbos->{'arch'}) {
-				die "Unable to launch a VE of architecture $pbos->{'arch'} on a $arch platform" if (($pbos->{'arch'} eq "x86_64") && ($arch =~ /i?86/));
-			}
-
-			my ($verpmtype,$vedebtype) = pb_conf_get("verpmtype","vedebtype");
-			if (($create != 0) || ((defined $verebuild) && ($verebuild->{$ENV{'PBPROJ'}} =~ /true/i)) || ($pbforce == 1)) {
-				my ($rbsopt1) = pb_conf_get_if("rbsopt");
-
-				# We have to rebuild the chroot
-				if ($pbos->{'type'} eq "rpm") {
-
-					# Which tool is used
-					my $verpmstyle = $verpmtype->{$ENV{'PBPROJ'}};
-
-					# Get potential rbs option
-					my $rbsopt = "";
-					if (defined $rbsopt1) {
-						if (defined $rbsopt1->{$verpmstyle}) {
-							$rbsopt = $rbsopt1->{$verpmstyle};
-						} elsif (defined $rbsopt1->{$ENV{'PBPROJ'}}) {
-							$rbsopt = $rbsopt1->{$ENV{'PBPROJ'}};
-						} else {
-							$rbsopt = "";
-						}
-					}
-
-					my $postinstall = pb_get_postinstall($pbos,$rbspi,$verpmstyle);
-					if ($verpmstyle eq "rinse") {
-						# Need to reshape the mirrors generated with local before-post-install script
-						my $b4post = "--before-post-install ";
-						my $postparam = pb_distro_get_param($pbos,$rbsb4pi);
-						if ($postparam eq "") {
-							$b4post = "";
-						} else {
-							$b4post .= $postparam;
-						}
-
-						# Need to reshape the package list for pb
-						my $addpkgs;
-						$postparam = "";
-						$postparam .= pb_distro_get_param($pbos,$osmindep);
-						if ($postparam eq "") {
-							$addpkgs = "";
-						} else {
-							my $pkgfile = "$ENV{'PBTMP'}/addpkgs.lis";
-							open(PKG,"> $pkgfile") || die "Unable to create $pkgfile";
-							foreach my $p (split(/,/,$postparam)) {
-								print PKG "$p\n";
-							}
-							close(PKG);
-							$addpkgs = "--add-pkg-list $pkgfile";
-						}
-
-						my $rinseverb = "";
-						$rinseverb = "--verbose" if ($pbdebug gt 0);
-						my ($rbsconf) = pb_conf_get("rbsconf");
-
-						my $command = pb_check_req("rinse",0);
-						pb_system("sudo $command --directory \"$vepath->{$ENV{'PBPROJ'}}/$pbos->{'name'}/$pbos->{'version'}/$pbos->{'arch'}\" --arch \"$pbos->{'arch'}\" --distribution \"$pbos->{'name'}-$pbos->{'version'}\" --config \"$rbsconf->{$ENV{'PBPROJ'}}\" $b4post $postinstall $rbsopt $addpkgs $rinseverb","Creating the rinse VE for $pbos->{'name'}-$pbos->{'version'} ($pbos->{'arch'})", "verbose");
-					} elsif ($verpmstyle eq "rpmbootstrap") {
-						my $rbsverb = "";
-						foreach my $i (1..$pbdebug) {
-							$rbsverb .= " -v";
-						}
-						my $addpkgs = "";
-						my $postparam = "";
-						$postparam .= pb_distro_get_param($pbos,$osmindep);
-						if ($postparam eq "") {
-							$addpkgs = "";
-						} else {
-							$addpkgs = "-a $postparam";
-						}
-						my $command = pb_check_req("rpmbootstrap",0);
-						pb_system("sudo $command $rbsopt $postinstall $addpkgs $pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'} $rbsverb","Creating the rpmbootstrap VE for $pbos->{'name'}-$pbos->{'version'} ($pbos->{'arch'})", "verbose");
-					} elsif ($verpmstyle eq "mock") {
-						my ($rbsconf) = pb_conf_get("rbsconf");
-						my $command = pb_check_req("mock",0);
-						pb_system("sudo $command --init --resultdir=\"/tmp\" --configdir=\"$rbsconf->{$ENV{'PBPROJ'}}\" -r $v $rbsopt","Creating the mock VE for $pbos->{'name'}-$pbos->{'version'} ($pbos->{'arch'})");
-						# Once setup we need to install some packages, the pb account, ...
-						pb_system("sudo $command --install --configdir=\"$rbsconf->{$ENV{'PBPROJ'}}\" -r $v su","Configuring the mock VE");
-					} else {
-						die "Unknown verpmtype type $verpmstyle. Report to dev team";
-					}
-				} elsif ($pbos->{'type'} eq "deb") {
-					my $vedebstyle = $vedebtype->{$ENV{'PBPROJ'}};
-
-					my $codename = pb_distro_get_param($pbos,$oscodename);
-					my $postparam = "";
-					my $addpkgs;
-					$postparam .= pb_distro_get_param($pbos,$osmindep);
-					if ($postparam eq "") {
-						$addpkgs = "";
-					} else {
-						$addpkgs = "--include $postparam";
-					}
-					my $debmir = "";
-					$debmir .= pb_distro_get_param($pbos,$rbsmirrorsrv);
-
-					# Get potential rbs option
-					my $rbsopt = "";
-					if (defined $rbsopt1) {
-						if (defined $rbsopt1->{$vedebstyle}) {
-							$rbsopt = $rbsopt1->{$vedebstyle};
-						} elsif (defined $rbsopt1->{$ENV{'PBPROJ'}}) {
-							$rbsopt = $rbsopt1->{$ENV{'PBPROJ'}};
-						} else {
-							$rbsopt = "";
-						}
-					}
-	
-					# debootstrap works with amd64 not x86_64
-					my $debarch = $pbos->{'arch'};
-					$debarch = "amd64" if ($pbos->{'arch'} eq "x86_64");
-					if ($vedebstyle eq "debootstrap") {
-						my $dbsverb = "";
-						$dbsverb = "--verbose" if ($pbdebug gt 0);
-
-						# Some perl modules are in Universe on Ubuntu
-						$rbsopt .= " --components=main,universe" if ($pbos->{'name'} eq "ubuntu");
-
-					 	pb_system("sudo /usr/sbin/debootstrap $dbsverb $rbsopt --arch=$debarch $addpkgs $codename \"$vepath->{$ENV{'PBPROJ'}}/$pbos->{'name'}/$pbos->{'version'}/$pbos->{'arch'}\" $debmir","Creating the debootstrap VE for $pbos->{'name'}-$pbos->{'version'} ($pbos->{'arch'})", "verbose");
-						# debootstrap doesn't create an /etc/hosts file
-						if (! -f "$vepath->{$ENV{'PBPROJ'}}/$pbos->{'name'}/$pbos->{'version'}/$pbos->{'arch'}/etc/hosts" ) {
-							pb_system("sudo cp /etc/hosts $vepath->{$ENV{'PBPROJ'}}/$pbos->{'name'}/$pbos->{'version'}/$pbos->{'arch'}/etc/hosts");
-						}
-					} else {
-						die "Unknown vedebtype type $vedebstyle. Report to dev team";
-					}
-				} elsif ($pbos->{'type'} eq "ebuild") {
-					die "Please teach the dev team how to build gentoo chroot";
-				} else {
-					die "Unknown distribution type $pbos->{'type'}. Report to dev team";
-				}
-			}
-			# Fix modes to allow access to the VE for pb user
-			pb_system("sudo chmod 755 $vepath->{$ENV{'PBPROJ'}}/$pbos->{'name'} $vepath->{$ENV{'PBPROJ'}}/$pbos->{'name'}/$pbos->{'version'} $vepath->{$ENV{'PBPROJ'}}/$pbos->{'name'}/$pbos->{'version'}/$pbos->{'arch'}","Fixing permissions");
-
-			# Test if an existing snapshot exists and use it if appropriate
-			# And also use it of no local extracted VE is present
-			if ((-f "$vepath->{$ENV{'PBPROJ'}}/$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'}.tar.gz") &&
-				(((defined $vesnap->{$v}) && ($vesnap->{$v} =~ /true/i)) ||
-					((defined $vesnap->{$ENV{'PBPROJ'}}) && ($vesnap->{$ENV{'PBPROJ'}} =~ /true/i)) ||
-					($pbsnap eq 1) ||
-					(! -d "$vepath->{$ENV{'PBPROJ'}}/$pbos->{'name'}/$pbos->{'version'}/$pbos->{'arch'}"))) {
-						pb_system("sudo rm -rf $vepath->{$ENV{'PBPROJ'}}/$pbos->{'name'}/$pbos->{'version'}/$pbos->{'arch'} ; sudo mkdir -p $vepath->{$ENV{'PBPROJ'}}/$pbos->{'name'}/$pbos->{'version'}/$pbos->{'arch'} ; sudo tar xz  -C $vepath->{$ENV{'PBPROJ'}}/$pbos->{'name'}/$pbos->{'version'}/$pbos->{'arch'} -f $vepath->{$ENV{'PBPROJ'}}/$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'}.tar.gz","Extracting snapshot of $pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'}.tar.gz under $vepath->{$ENV{'PBPROJ'}}/$pbos->{'name'}/$pbos->{'version'}/$pbos->{'arch'}");
-			}
-			# Nothing more to do for VE. No real launch
-		} else {
-			die "VE of type $vetype not supported. Report to the dev team";
-		}
+		# Force the creation of the VE and no snapshot usable
+		pb_ve_launch($v,$create,$usesnap);
 	} else {
 		# RM here
 		# Get distro context
@@ -2601,70 +2598,84 @@ sub pb_newver {
 	# Tree identical between PBCONFDIR and PBROOTDIR. The delta is what 
 	# we want to get for the root of the new URL
 
-	my $tmp = $ENV{'PBROOTDIR'};
-	$tmp =~ s|^$ENV{'PBCONFDIR'}||;
+	my $oldver = $ENV{'PBROOTDIR'};
+	$oldver =~ s|^$ENV{'PBCONFDIR'}||;
 
-	my $newurl = "$uri/".dirname($tmp)."/$newver";
+	pb_log(2, "PBCONFDIR: $ENV{'PBCONFDIR'}\nPBROOTDIR: $ENV{'PBROOTDIR'}\n");
+
+	my $newurl = "$uri/$newver";
 	# Should probably use projver in the old file
-	my $oldver= basename($tmp);
+	my $oldvertxt= basename($oldver);
+	my $newvertxt = basename($newver);
 
 	# Duplicate and extract project-builder part
-	pb_log(2,"Copying $uri/$tmp to $newurl\n");
-	pb_cms_copy($scheme,"$uri/$tmp",$newurl);
-	pb_log(2,"Checkout $newurl to $ENV{'PBROOTDIR'}/../$newver\n");
-	pb_cms_up($scheme,"$ENV{'PBCONFDIR'}/..");
+	pb_log(2,"Copying $uri/$oldver to $newurl\n");
+	pb_cms_copy($scheme,"$uri/$oldver",$newurl);
+	pb_log(2,"Checkout $newurl to $ENV{'PBCONFDIR'}/$newver\n");
+	pb_cms_up($scheme,"$ENV{'PBCONFDIR'}");
 
 	# Duplicate and extract project
-	my $newurl2 = "$pburl->{$ENV{'PBPROJ'}}/".dirname($tmp)."/$newver";
+	my $newurl2 = "$pburl->{$ENV{'PBPROJ'}}/$newver";
 
-	pb_log(2,"Copying $pburl->{$ENV{'PBPROJ'}}/$tmp to $newurl2\n");
-	pb_cms_copy($scheme2,"$pburl->{$ENV{'PBPROJ'}}/$tmp",$newurl2);
-	pb_log(2,"Checkout $newurl2 to $ENV{'PBDIR'}/../$newver\n");
-	pb_cms_up($scheme2,"$ENV{'PBDIR'}/..");
+	pb_log(2,"Copying $pburl->{$ENV{'PBPROJ'}}/$oldver to $newurl2\n");
+	pb_cms_copy($scheme2,"$pburl->{$ENV{'PBPROJ'}}/$oldver",$newurl2);
+
+	my $tmp = $ENV{'PBDIR'};
+	$tmp =~ s|$oldver$||;
+	pb_log(2,"Checkout $newurl2 to $tmp/$newver\n");
+	pb_cms_up($scheme2,"$tmp");
 
 	# Update the .pb file
-	open(FILE,"$ENV{'PBROOTDIR'}/../$newver/$ENV{'PBPROJ'}.pb") || die "Unable to open $ENV{'PBROOTDIR'}/../$newver/$ENV{'PBPROJ'}.pb";
-	open(OUT,"> $ENV{'PBROOTDIR'}/../$newver/$ENV{'PBPROJ'}.pb.new") || die "Unable to write to $ENV{'PBROOTDIR'}/../$newver/$ENV{'PBPROJ'}.pb.new";
+	open(FILE,"$ENV{'PBCONFDIR'}/$newver/$ENV{'PBPROJ'}.pb") || die "Unable to open $ENV{'PBCONFDIR'}/$newver/$ENV{'PBPROJ'}.pb";
+	open(OUT,"> $ENV{'PBCONFDIR'}/$newver/$ENV{'PBPROJ'}.pb.new") || die "Unable to write to $ENV{'PBCONFDIR'}/$newver/$ENV{'PBPROJ'}.pb.new";
 	while(<FILE>) {
-		s/^projver\s+$ENV{'PBPROJ'}\s*=\s*$oldver/projver $ENV{'PBPROJ'} = $newver/;
-		pb_log(0,"Changing projver from $oldver to $newver in $ENV{'PBROOTDIR'}/../$newver/$ENV{'PBPROJ'}.pb\n") if (/^projver\s+$ENV{'PBPROJ'}\s*=\s*$oldver/);
-		pb_log(0,"Commenting testver in $ENV{'PBROOTDIR'}/../$newver/$ENV{'PBPROJ'}.pb\n") if (/^testver/);
-		s/^testver/#testver/;
+		if (/^projver\s+$ENV{'PBPROJ'}\s*=\s*$oldvertxt$/) {
+			s/^projver\s+$ENV{'PBPROJ'}\s*=\s*$oldvertxt$/projver $ENV{'PBPROJ'} = $newvertxt/;
+			pb_log(0,"Changing projver from $oldvertxt to $newvertxt in $ENV{'PBCONFDIR'}/$newver/$ENV{'PBPROJ'}.pb\n");
+		}
+		if (/^testver/) {
+			s/^testver/#testver/;
+			pb_log(0,"Commenting testver in $ENV{'PBCONFDIR'}/$newver/$ENV{'PBPROJ'}.pb\n") if (/^testver/);
+		}
+		if (/^delivery/) {
+			my $txt = $_;
+			chomp($txt);
+			pb_log(0,"Please check delivery ($txt) in $ENV{'PBCONFDIR'}/$newver/$ENV{'PBPROJ'}.pb\n");
+		}
 		print OUT $_;
-		pb_log(0,"Please check delivery (".chomp($_).") in $ENV{'PBROOTDIR'}/../$newver/$ENV{'PBPROJ'}.pb\n") if (/^delivery/);
 	}
 	close(FILE);
 	close(OUT);
-	rename("$ENV{'PBROOTDIR'}/../$newver/$ENV{'PBPROJ'}.pb.new","$ENV{'PBROOTDIR'}/../$newver/$ENV{'PBPROJ'}.pb");
+	rename("$ENV{'PBCONFDIR'}/$newver/$ENV{'PBPROJ'}.pb.new","$ENV{'PBCONFDIR'}/$newver/$ENV{'PBPROJ'}.pb");
 
 	# Checking pbcl files
 	foreach my $f (<$ENV{'PBROOTDIR'}/*/pbcl>) {
 		# Compute new pbcl file
 		my $f2 = $f;
-		$f2 =~ s|$ENV{'PBROOTDIR'}|$ENV{'PBROOTDIR'}/../$newver/|;
+		$f2 =~ s|$ENV{'PBROOTDIR'}|$ENV{'PBCONFDIR'}/$newver/|;
 		open(PBCL,$f) || die "Unable to open $f";
 		my $foundnew = 0;
 		while (<PBCL>) {
-			$foundnew = 1 if (/^$newver \(/);
+			$foundnew = 1 if (/^$newvertxt \(/);
 		}
 		close(PBCL);
 		open(OUT,"> $f2") || die "Unable to write to $f2: $!";
 		open(PBCL,$f) || die "Unable to open $f";
 		while (<PBCL>) {
-			print OUT "$_" if (not /^$oldver \(/);
-			if ((/^$oldver \(/) && ($foundnew == 0)) {
-				print OUT "$newver ($pbdate)\n";
+			print OUT "$_" if (not /^$oldvertxt \(/);
+			if ((/^$oldvertxt \(/) && ($foundnew == 0)) {
+				print OUT "$newvertxt ($pbdate)\n";
 				print OUT "- TBD\n";
 				print OUT "\n";
-				pb_log(0,"WARNING: version $newver not found in $f so added to $f2...\n") if ($foundnew == 0);
+				pb_log(0,"WARNING: version $newvertxt not found in $f so added to $f2...\n") if ($foundnew == 0);
 			}
 		}
 		close(OUT);
 		close(PBCL);
 	}
 
-	pb_log(2,"Checkin $ENV{'PBROOTDIR'}/../$newver\n");
-	pb_cms_checkin($scheme,"$ENV{'PBROOTDIR'}/../$newver",undef);
+	pb_log(2,"Checkin $ENV{'PBCONFDIR'}/$newver\n");
+	pb_cms_checkin($scheme,"$ENV{'PBCONFDIR'}/$newver",undef);
 }
 
 #
@@ -2756,7 +2767,9 @@ our $pbsynmsg = "pbscript";
 our $pbdisplaytype = "text";
 our $pblocale = "";
 pb_log_init($pbdebug, $pbLOG);
-pb_temp_init();
+EOF
+	print SCRIPT << "EOF";
+pb_temp_init($pbkeep);
 
 EOF
 
@@ -2972,7 +2985,7 @@ EOF
 # Nothing else should be needed
 EOF
 		foreach my $c (@sudocmds) {
-			print SCRIPT "print PBOUT \"$pbac->{$ENV{'PBPROJ'}}   ALL = NOPASSWD: $c\n\";";
+			print SCRIPT "print PBOUT \"$pbac->{$ENV{'PBPROJ'}}   ALL = NOPASSWD: $c\\n\";\n";
 		}
 	} elsif ($vtype =~ /^rm/) {
 		my @sudocmds = pb_get_sudocmds($pbos,$ntpline);
@@ -2980,7 +2993,7 @@ EOF
 # Build account $pbac->{$ENV{'PBPROJ'}} in RM only needs to setup date and install deps if needed each time
 EOF
 		foreach my $c (@sudocmds) {
-			print SCRIPT "print PBOUT \"$pbac->{$ENV{'PBPROJ'}}   ALL = NOPASSWD: $c\n\";";
+			print SCRIPT "print PBOUT \"$pbac->{$ENV{'PBPROJ'}}   ALL = NOPASSWD: $c\\n\";\n";
 		}
 	} else {
 		print SCRIPT << "EOF";
@@ -3067,9 +3080,12 @@ foreach my $m (split(/,/,$perldep)) {
 	pb_system("echo \"rm -rf $m* ; wget http://search.cpan.org/CPAN/modules/by-module/$dir/$m-$osperlver->{$m}.tar.gz ; gzip -cd $m-$osperlver->{$m}.tar.gz | tar xf - ; cd $m* ; if [ -f Build.PL ]; then perl Build.PL; ./Build ; ./Build install ; else perl Makefile.PL; make ; make install ; fi; cd .. ; rm -rf $m*\" | bash" ,"Installing perl module $m-$osperlver->{$m}");
 }
 EOF
-
-		print SCRIPT << "EOF";
-pb_system("rm -rf ProjectBuilder-* ; rm -rf project-builder-* ; $cmdget ; gzip -cd ProjectBuilder-latest.tar.gz | tar xf - ; cd ProjectBuilder-* ; perl Makefile.PL ; make ; make install ; cd .. ; rm -rf ProjectBuilder-* ; gzip -cd project-builder-latest.tar.gz | tar xf - ; cd project-builder-* ; perl Makefile.PL ; make ; make install ; cd .. ; rm -rf project-builder-* ;","Building Project-Builder");
+		print SCRIPT << 'EOF';
+pb_system("rm -rf ProjectBuilder-* ; rm -rf project-builder-* ; rm -rf `perl -V:installvendorlib  | awk -F\"'\" '{print \$2}'`/ProjectBuilder ;
+EOF
+		print SCRIPT " $cmdget ; ";
+		print SCRIPT << 'EOF'
+gzip -cd ProjectBuilder-latest.tar.gz | tar xf - ; cd ProjectBuilder-* ; perl Makefile.PL ; make ; make install ; cd .. ; rm -rf ProjectBuilder-* ; gzip -cd project-builder-latest.tar.gz | tar xf - ; cd project-builder-* ; perl Makefile.PL ; make ; make install ; cd .. ; rm -rf project-builder-* ;","Building Project-Builder");
 EOF
 	} elsif ($itype =~ /^pkg/) {
 		# pkg based install. We need to point to the project-builder.org repository
@@ -3233,9 +3249,16 @@ return;
 
 sub pb_announce {
 
+	my $antype = shift;
+
 	# Get all required parameters
 	my ($pbpackager,$pbrepo,$pbml,$pbsmtp) = pb_conf_get("pbpackager","pbrepo","pbml","pbsmtp");
-	my ($pkgv, $pkgt) = pb_conf_get_if("pkgver","pkgtag");
+	my ($pkgv, $pkgt, $testver) = pb_conf_get_if("pkgver","pkgtag","testver");
+	if (((not defined $testver) || (not defined $testver->{$ENV{'PBPROJ'}}) || ($testver->{$ENV{'PBPROJ'}} !~ /true/i)) && ($antype eq "Clean")) {
+		# We just clean for test versions
+		pb_log(0,"Unable to clean SSH repository for non testver version\n");
+		return;
+	}
 	my $pkg = pb_cms_get_pkg($defpkgdir,$extpkgdir);
 	my @pkgs = @$pkg;
 	my %pkgs;
@@ -3245,13 +3268,16 @@ sub pb_announce {
 	my $pbos = pb_distro_get_context();
 	my $distrolist = pb_get_distros($pbos,undef);
 	my %dl;
+	my %theorlist;
+	my %archlist;
 	foreach my $d (split(/,/,$distrolist)) {
-		my ($d1,$d2, $d3) = split(/-/,$d);
+		my ($d1,$d2,$d3) = split(/-/,$d);
 		$dl{$d1}++;
 	}
 
 	# Command to find packages on repo
 	my $findstr = "find ".join(" ",keys %dl)." ";
+	my $srcstr = "";
 	# Generated announce files
 	my @files;
 
@@ -3275,52 +3301,91 @@ sub pb_announce {
 		my $pbrealpkg = $pbpkg;
 		my $pbrealpkgrpm = pb_cms_get_real_pkg($pbpkg,"rpm");
 		my $pbrealpkgdeb = pb_cms_get_real_pkg($pbpkg,"deb");
-		$findstr .= "-name \'$pbrealpkgrpm-$pbver-$pbtag\.*.rpm\' -o -name \'$pbrealpkgdeb"."_$pbver*\.deb\' -o -name \'$pbrealpkg-$pbver*\.ebuild\' -o -name \'$pbrealpkg-$pbver*\.pkg\' -o -name \'$pbrealpkg-$pbver*\.sd\' ";
+		if ($antype eq "Clean") {
+			$pbtag = "0.[0-9][0-9]*";
+			$findstr .= "-name \'$pbrealpkgrpm-$pbver-$pbtag\.*.rpm\' -o -name \'$pbrealpkgrpm-debug-$pbver-$pbtag\.*.rpm\' -o -name \'$pbrealpkgdeb"."_$pbver-$pbtag"."_*\.deb\' -o -name \'$pbrealpkgdeb"."_$pbver-$pbtag.dsc\' -o -name \'$pbrealpkgdeb"."_$pbver-$pbtag.tar.gz\' -o -name \'$pbrealpkg-$pbver"."_p[0-9]*\.ebuild\' -o -name \'$pbrealpkg-$pbver-$pbtag*\.pkg\' -o -name \'$pbrealpkg-$pbver-$pbtag*\.sd\' ";
+			$srcstr .= "src/$pbrealpkg-$pbver.tar.gz src/$pbrealpkg-$pbver.pbconf.tar.gz ";
+		} else {
+			my @date=pb_get_date();
+			# the matching is only done on packages made the same day for test version. Hopefully this is enough
+			$pbtag = "0.".strftime("%Y%m%d*", @date) if ((defined $testver) && (defined $testver->{$ENV{'PBPROJ'}}) && ($testver->{$ENV{'PBPROJ'}} =~ /true/i) && ($antype eq "Check"));
+			$findstr .= "-name \'$pbrealpkgrpm-$pbver-$pbtag\.*.rpm\' -o -name \'$pbrealpkgdeb"."_$pbver*\.deb\' -o -name \'$pbrealpkg-$pbver*\.ebuild\' -o -name \'$pbrealpkg-$pbver*\.pkg\' -o -name \'$pbrealpkg-$pbver*\.sd\' ";
+		}
 
-		my $chglog;
+		if ($antype eq "Announce") {
+			my $chglog;
 
-		# Get project info on log file and generate tmp files used later on
-		pb_cms_init($pbinit);
-		$chglog = "$ENV{'PBROOTDIR'}/$pbpkg/pbcl";
-		$chglog = "$ENV{'PBROOTDIR'}/pbcl" if (! -f $chglog);
-		$chglog = undef if (! -f $chglog);
+			pb_cms_init($pbinit);
+			# Get project info on log file and generate tmp files used later on
+			$chglog = "$ENV{'PBROOTDIR'}/$pbpkg/pbcl";
+			$chglog = "$ENV{'PBROOTDIR'}/pbcl" if (! -f $chglog);
+			$chglog = undef if (! -f $chglog);
 
-		open(OUT,"> $ENV{'PBTMP'}/$pbpkg.ann") || die "Unable to create $ENV{'PBTMP'}/$pbpkg.ann: $!";
-		my $pb;
-		$pb->{'realpkg'} = $pbrealpkg;
-		$pb->{'ver'} = $pbver;
-		$pb->{'tag'} = $pbtag;
-		$pb->{'date'} = $pbdate;
-		$pb->{'chglog'} = $chglog;
-		$pb->{'packager'} = $pbpackager;
-		$pb->{'proj'} = $ENV{'PBPROJ'};
-		$pb->{'repo'} = $pbrepo;
-		$pb->{'pbos'}->{'type'} = "announce";
-		$pb->{'pbos'}->{'suffix'} = "none";
-		pb_changelog($pb,\*OUT,"yes");
-		close(OUT);
-		push(@files,"$ENV{'PBTMP'}/$pbpkg.ann");
+			open(OUT,"> $ENV{'PBTMP'}/$pbpkg.ann") || die "Unable to create $ENV{'PBTMP'}/$pbpkg.ann: $!";
+			my $pb;
+			$pb->{'realpkg'} = $pbrealpkg;
+			$pb->{'ver'} = $pbver;
+			$pb->{'tag'} = $pbtag;
+			$pb->{'date'} = $pbdate;
+			$pb->{'chglog'} = $chglog;
+			$pb->{'packager'} = $pbpackager;
+			$pb->{'proj'} = $ENV{'PBPROJ'};
+			$pb->{'repo'} = $pbrepo;
+			$pb->{'pbos'}->{'type'} = "announce";
+			$pb->{'pbos'}->{'suffix'} = "none";
+			pb_changelog($pb,\*OUT,"yes");
+			close(OUT);
+			push(@files,"$ENV{'PBTMP'}/$pbpkg.ann");
+		} elsif ($antype eq "Check") {
+			# For the check we also build the theoritical complete list we should get
+			foreach my $d (split(/,/,$distrolist)) {
+				$pbos = pb_distro_get_context($d);
+				if ($pbos->{'type'} eq "rpm") {
+					$theorlist{"$pbos->{'name'}/$pbos->{'version'}/$pbos->{'arch'}/$pbrealpkgrpm-$pbver-$pbtag$pbos->{'suffix'}"} = 0;
+				} elsif ($pbos->{'type'} eq "deb") {
+					$theorlist{"$pbos->{'name'}/$pbos->{'version'}/$pbrealpkgdeb"."_$pbver-$pbtag"} = 0;
+					# TODO are we always using the last arch ?
+					$archlist{"$pbos->{'name'}/$pbos->{'version'}/$pbrealpkgdeb"."_$pbver-$pbtag"} = "$pbos->{'arch'}";
+				} elsif ($pbos->{'type'} eq "ebuild") {
+					my $prefix = "-r";
+					$prefix = "_p" if ((defined $testver) && (defined $testver->{$ENV{'PBPROJ'}}) && ($testver->{$ENV{'PBPROJ'}} =~ /true/i));
+					$theorlist{"$pbos->{'name'}/$pbos->{'version'}/$pbrealpkg-$pbver$prefix$pbtag.ebuild"} = 0;
+					$archlist{"$pbos->{'name'}/$pbos->{'version'}/$pbrealpkg-$pbver$prefix$pbtag.ebuild"} = "$pbos->{'arch'}";
+				} elsif ($pbos->{'type'} eq "pkg") {
+					$theorlist{"$pbos->{'name'}/$pbos->{'version'}/$pbos->{'arch'}/$pbrealpkg-$pbver-$pbtag.pkg"} = 0;
+				} else {
+					pb_log(1,"No theoritical list possible for type $pbos->{'type'}\n");
+				}
+			}
+		}
+		pb_log(2,"theorlist : ".Dumper(%theorlist)."\n");
 	}
-	$findstr .= " | grep -Ev \'src.rpm\'";
+	if ($antype eq "Announce") {
+		$findstr .= " | grep -Ev \'src.rpm\'";
+	} elsif ($antype eq "Clean") {
+		$findstr .= " | xargs rm -f -v $srcstr ";
+	}
 
 	# Prepare the command to run and execute it
 	open(PBS,"> $ENV{'PBTMP'}/pbscript") || die "Unable to create $ENV{'PBTMP'}/pbscript";
+	print PBS "#!/bin/bash\n";
 	print PBS "set -x\n" if ($pbdebug gt 1);
 	print PBS "$findstr | sort 2> /dev/null\n";
 	close(PBS);
 	chmod 0755,"$ENV{'PBTMP'}/pbscript";
 	pb_send2target("Announce");
 
-	# Get subject line
 	my $sl = "Project $ENV{'PBPROJ'} version $ENV{'PBPROJVER'} is now available";
-	pb_log(0,"Please enter the title of your announce\n");
-	pb_log(0,"(By default: $sl)\n");
-	my $sl2 = <STDIN>;
-	$sl = $sl2 if ($sl2 !~ /^$/);
+	if ($antype eq "Announce") {
+		# Get subject line
+		pb_log(0,"Please enter the title of your announce\n");
+		pb_log(0,"(By default: $sl)\n");
+		my $sl2 = <STDIN>;
+		$sl = $sl2 if ($sl2 !~ /^$/);
 
-	# Prepare a template of announce
-	open(ANN,"> $ENV{'PBTMP'}/announce.html") || die "Unable to create $ENV{'PBTMP'}/announce.html: $!";
-	print ANN << "EOF";
+		# Prepare a template of announce
+		open(ANN,"> $ENV{'PBTMP'}/announce.html") || die "Unable to create $ENV{'PBTMP'}/announce.html: $!";
+		print ANN << "EOF";
 $sl</p>
 
 <p>The project team is happy to announce the availability of a newest version of $ENV{'PBPROJ'} $ENV{'PBPROJVER'}. Enjoy it as usual!</p>
@@ -3329,22 +3394,135 @@ Now available at <a href="$pbrepo->{$ENV{'PBPROJ'}}">$pbrepo->{$ENV{'PBPROJ'}}</
 </p>
 <p>
 EOF
+	}
+
 	open(LOG,"$ENV{'PBTMP'}/system.$$.log") || die "Unable to read $ENV{'PBTMP'}/system.$$.log: $!";
-	my $col = 2;
-	my $i = 1;
-	print ANN << 'EOF';
+	if ($antype eq "Announce") {
+		my $col = 2;
+		my $i = 1;
+		print ANN << 'EOF';
 <TABLE WIDTH="700" CELLPADDING="0" CELLSPACING="0" BORDER="0">
 <TR>
 EOF
-	while (<LOG>) {
-		print ANN "<TD><A HREF=\"$pbrepo->{$ENV{'PBPROJ'}}/$_\">$_</A></TD>";
-		$i++;
-		if ($i > $col) {
-			print ANN "</TR>\n<TR>";
-			$i = 1;
+		while (<LOG>) {
+			print ANN "<TD><A HREF=\"$pbrepo->{$ENV{'PBPROJ'}}/$_\">$_</A></TD>";
+			$i++;
+			if ($i > $col) {
+				print ANN "</TR>\n<TR>";
+				$i = 1;
+			}
 		}
+	} elsif ($antype eq "Clean") {
+		while (<LOG>) {
+			# skip errors
+			next if ($_ !~ /^removed /);
+			pb_log(0,"$_");
+		}
+	} else {
+		# In Check mode we need to compare the 2 lists (real and theoritical)
+		while (<LOG>) {
+			# Get package name and remove what is in extra for the theoritical list (arch at the end)
+			chomp();
+			# skip find errors
+			next if (/^find:/);
+			my $p = $_;
+			$p =~ s/\.(i[3456]86|x86_64|noarch|src)\.rpm$//;
+			$p =~ s/_(i[3456]86|amd64|all).deb$//;
+			$p =~ s/(-0\.[0-9]{8})[0-9]{6}/$1*/ if ((defined $testver) && (defined $testver->{$ENV{'PBPROJ'}}) && ($testver->{$ENV{'PBPROJ'}} =~ /true/i));
+			$p =~ s/(-r|_p[0-9]+)\.ebuild/$1*/ if ((defined $testver) && (defined $testver->{$ENV{'PBPROJ'}}) && ($testver->{$ENV{'PBPROJ'}} =~ /true/i));
+			$theorlist{$p} = -2 if (not defined $theorlist{$p});
+			$theorlist{$p} = $theorlist{$p} + 1;
+		}
+		pb_log(2,"theorlist : ".Dumper(%theorlist)."\n");
 	}
 	close(LOG);
+
+	# Nothing more for the cleanssh case
+	return if ($antype eq "Clean");
+
+	if ($antype eq "Check") {
+		my ($chkex) = pb_conf_get_if("checkexclude");
+		my $vmbuildlist = "";
+		my $vebuildlist = "";
+		my $rmbuildlist = "";
+		my @pt = pb_conf_get_if("vmlist","velist","rmlist");
+		foreach my $t (sort keys %theorlist) {
+			if (defined $theorlist{$t} and $theorlist{$t} >= 1) {
+				pb_log(1,"Packages found for $t\n");
+			} elsif (defined $theorlist{$t} and $theorlist{$t} < 0) {
+				pb_log(0,"Extra Package found for $t\n");
+			} else {
+				pb_log(2,"Analyzing $t\n");
+				my ($os,$ver,$arch,$package) = split(/\//,$t);
+				# Some distro have no arch subdir
+				if (not defined $package) {
+					$package = $arch;
+					# TODO: If both arch have failed, we just make the last one
+					$arch = $archlist{$t};
+				}
+				my $pbos = pb_distro_get_context("$os-$ver-$arch");
+				my $pkgn = $package;
+				if ($pbos->{'type'} ne "deb") {
+					# package name is more easily found from the end for non deb 
+					# as '-' is the separator, but it can also be used in names
+					$pkgn = reverse($package);
+					# search the second '-' and isolate the now last part which is the full name
+					$pkgn =~ s/([^-]+)-([^-]+)-([\S])+$/$3/;
+				} else {
+					$pkgn =~ s/([^_]+)_([\S])+$/$2/;
+				}
+				my $found = 0;
+				# Handle the exclusion of OSes
+				my $excl = "";
+				$excl .= $chkex->{$pkgn} if (defined $chkex->{$pkgn});
+				$excl .= $chkex->{"all"} if (defined $chkex->{"all"});
+				foreach my $ex (split(/,/,$excl)) {
+					$found = 1 if ("$os-$ver-$arch" =~ /^$ex/);
+				}
+				# Skip as excluded
+				next if ($found == 1);
+				pb_log(0,"Package NOT found for $t\n");
+				# Avoid duplicates in list
+				next if ($vmbuildlist =~ /$os-$ver-$arch/);
+				next if ($vebuildlist =~ /$os-$ver-$arch/);
+				next if ($rmbuildlist =~ /$os-$ver-$arch/);
+				# check with which method we need to build
+				if ((defined $pt[0]->{$ENV{'PBPROJ'}}) and ($pt[0]->{$ENV{'PBPROJ'}} =~ /$os-$ver-$arch/)) {
+					$vmbuildlist = "$os-$ver-$arch" if ($vmbuildlist eq "");
+					$vmbuildlist .= ",$os-$ver-$arch" if ($vmbuildlist !~ /$os-$ver-$arch/);
+					next;
+				}
+				if ((defined $pt[1]->{$ENV{'PBPROJ'}}) and ($pt[1]->{$ENV{'PBPROJ'}} =~ /$os-$ver-$arch/)) {
+					$vebuildlist = "$os-$ver-$arch" if ($vebuildlist eq "");
+					$vebuildlist .= ",$os-$ver-$arch" if ($vebuildlist !~ /$os-$ver-$arch/);
+					next;
+				}
+				if ((defined $pt[2]->{$ENV{'PBPROJ'}}) and ($pt[2]->{$ENV{'PBPROJ'}} =~ /$os-$ver-$arch/)) {
+					$rmbuildlist = "$os-$ver-$arch" if ($rmbuildlist eq "");
+					$rmbuildlist .= ",$os-$ver-$arch" if ($rmbuildlist !~ /$os-$ver-$arch/);
+				}
+			}
+		}
+		# If we want to rebuild automatically, let's do it
+		if (defined $opts{'rebuild'}) {
+			# SandBox or CMS
+			pb_log(0,"Rebuilding from SandBox\n");
+			pb_log(0,"for VMs: $vmbuildlist\n") if ($vmbuildlist ne "");
+			pb_log(0,"for VEs: $vebuildlist\n") if ($vebuildlist ne "");
+			pb_log(0,"for RMs: $rmbuildlist\n") if ($rmbuildlist ne "");
+			pb_cms2build("SandBox");
+			# Which mode
+			$ENV{'PBV'} = $vmbuildlist;
+			pb_build2v("vm","build") if ($vmbuildlist ne "");
+			$ENV{'PBV'} = $vebuildlist;
+			pb_build2v("ve","build") if ($vebuildlist ne "");
+			$ENV{'PBV'} = $rmbuildlist;
+			pb_build2v("rm","build") if ($rmbuildlist ne "");
+		}
+		# For the check part this is now finished
+		return;
+	}
+
 	print ANN << "EOF";
 </TR>
 </TABLE>
@@ -3598,23 +3776,33 @@ my $pbpkg = shift;
 my $bfiles = shift;
 my $pkgfiles = shift;
 my $supfiles = shift;
+# subdir to keep if recursive mode, empty by default
+my $subdir = shift || "";
+# In a recursive function , we need a local var as DIR handle
+my $bdir;
 
-pb_log(2,"DEBUG: entering pb_list_bfiles: ".Dumper($bfiles)."\n");
-opendir(BDIR,"$dir") || die "Unable to open dir $dir: $!";
-foreach my $f (readdir(BDIR)) {
+pb_log(2,"DEBUG: entering pb_list_bfiles in $dir: ".Dumper($bfiles)."\n");
+opendir($bdir,"$dir") || die "Unable to open dir $dir: $!";
+foreach my $f (readdir($bdir)) {
+	pb_log(3,"DEBUG: pb_list_bfiles found $f\n");
 	next if ($f =~ /^\./);
-	if (-d $f) {
+	if (-d "$dir/$f") {
 		# Recurse for directories (Debian 3.0 format e.g.)
-		pb_list_bfiles($f,$pbpkg,$bfiles,$pkgfiles,$supfiles);
+		pb_log(2,"DEBUG: pb_list_bfiles recurse in $dir/$f\n");
+		pb_list_bfiles("$dir/$f",$pbpkg,$bfiles,$pkgfiles,$supfiles,$f);
 		next;
 	}
-	$bfiles->{$f} = "$dir/$f";
-	$bfiles->{$f} =~ s~$ENV{'PBROOTDIR'}~~;
+
+	my $key = $f;
+	# if recursive then store also the subdir
+	$key = "$subdir/$f" if ($subdir ne "");
+	$bfiles->{$key} = "$dir/$f";
+	$bfiles->{$key} =~ s~$ENV{'PBROOTDIR'}~~;
 	if (defined $supfiles->{$pbpkg}) {
-		$pkgfiles->{$f} = "$dir/$f" if ($f =~ /$supfiles->{$pbpkg}/);
+		$pkgfiles->{$key} = "$dir/$f" if ($f =~ /$supfiles->{$pbpkg}/);
 	}
 }
-closedir(BDIR);
+closedir($bdir);
 pb_log(2,"DEBUG: exiting pb_list_bfiles: ".Dumper($bfiles)."\n");
 }
 
@@ -3676,33 +3864,6 @@ pb_log(0,"Packages: ".join(',',@pkgs)."\n");
 return(\@pkgs);
 }
 
-#
-# Return the postinstall line if needed
-#
-
-sub pb_get_postinstall {
-
-my $pbos = shift;
-my $rbspi = shift;
-my $vestyle = shift;
-my $post = "";
-
-# Do we have a local post-install script
-if ($vestyle eq "rinse") {
-	$post = "--post-install ";
-} elsif ($vestyle eq "rpmbootstrap") {
-	$post = "-s ";
-}
-
-my $postparam = pb_distro_get_param($pbos,$rbspi);
-if ($postparam eq "") {
-	$post = "";
-} else {
-	$post .= $postparam;
-}
-return($post);
-}
-
 # Manages VM/RM SSH port communication
 sub pb_get_port {
 
@@ -3751,12 +3912,12 @@ if ((defined $pbparallel) && ($pbparallel ne 1) && ($vtype eq "vm")) {
 	};
 	if ($@) {
 		# Linux::SysInfo not found
-		pb_log(1,"ADVISE: Install Linux::SysInfo to benefit from automatic parallelism optimization.\nOr optimize manually pbparallel in your pb.conf file\nUsing $pbparallel processes max at a time for the moment\nWARNING: This may consume too much memory for your system");
+		pb_log(1,"ADVISE: Install Linux::SysInfo to benefit from automatic parallelism optimization.\nOr optimize manually pbparallel in your pb.conf file\nUsing $pbparallel processes max at a time for the moment\nWARNING: This may consume too much memory for your system\n");
 	} else {
 		# Using the memory size
 		my $si = Linux::SysInfo::sysinfo();
 		if (not defined $si) {
-			pb_log(1,"ADVISE: Install Linux::SysInfo to benefit from automatic parallelism optimization.\nOr optimize manually pbparallel in your pb.conf file\nUsing $pbparallel processes max at a time for the moment\nWARNING: This may consume too much memory for your system");
+			pb_log(1,"ADVISE: Install Linux::SysInfo to benefit from automatic parallelism optimization.\nOr optimize manually pbparallel in your pb.conf file\nUsing $pbparallel processes max at a time for the moment\nWARNING: This may consume too much memory for your system\n");
 		} else {
 			# Keep the number of VM whose memory can be allocated
 			my $ram = $si->{"totalram"}-$si->{"sharedram"}-$si->{"bufferram"};
@@ -3841,7 +4002,8 @@ if ($pbos->{'type'} eq "rpm") {
 	foreach my $c (split(/ /,$made)) {
 		$changes .= " $ENV{'PBBUILDDIR'}/$c" if ($c =~ /\.changes$/);
 	}
-	pb_system("debsign -m\'$ENV{'PBPACKAGER'}\' $changes","Signing DEB packages");
+	my $debsigncmd = pb_check_req("debsign",1);
+	pb_system("$debsigncmd -m\'$ENV{'PBPACKAGER'}\' $changes","Signing DEB packages");
 } else {
 	pb_log(0,"I don't know yet how to sign packages for type $pbos->{'type'}.\nPlease give feedback to dev team\n");
 }
@@ -3857,13 +4019,13 @@ my $pbtarget = shift;
 my $tmpl = "$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'},";
 
 # Get list of distributions for which we need to generate build files if no target
-if (not defined ($pbtarget)) {
+if (not defined $pbtarget) {
 	my @pt = pb_conf_get_if("vmlist","velist","rmlist");
 	if (defined $pt[0]->{$ENV{'PBPROJ'}}) {
 		$tmpl .= $pt[0]->{$ENV{'PBPROJ'}};
 	}
 	if (defined $pt[1]->{$ENV{'PBPROJ'}}) {
-		# The 2 lists needs to be grouped with a ',' separating them
+		# The 2 lists need to be grouped with a ',' separating them
 		if ($tmpl ne "") {
 			$tmpl .= ",";
 		}
