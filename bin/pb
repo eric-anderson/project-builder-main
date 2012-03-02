@@ -38,6 +38,7 @@ use ProjectBuilder::Changelog;
 use ProjectBuilder::VE;
 
 # Global variables
+$Global::pb_stop_on_error = 1;
 my %opts;					# CLI Options
 my $action;					# action to realize
 my $test = "FALSE";			# Not used
@@ -157,6 +158,10 @@ Keep the temporary dir where files have been created in or der to help debug
 =item B<--rebuild>
 
 Only valid with the checkssh action, it alllows to automatically relaunch the build of the failed packages
+
+=item B<--no-stop-on-error>
+
+Continue through errors with best effort.
 
 =back 
 
@@ -456,6 +461,48 @@ Here is an example of such a configuration file:
  # -daemonize doesn't work with qemu 0.8.2
  vmopt default = -m 384
 
+=head1 COMMAND DETAILS
+
+=head2 newproj
+
+The newproj command creates a new project-builder project.  To run this command you first need to
+define two variables in your ~/.pbrc file:
+
+    pbconfurl I<project> = file:///home/anderse/.git/project-builder-config/I<project>
+    pbdefdir default = $ENV{HOME}/cache-project-builder
+
+The first line defines the version controlled configuration information and the second defines the
+root directory for project-builder to use.
+
+You can then run the command:
+
+    % pb -p I<$project> -r I<$version> newproj
+
+to create the new project. Running the newproj command will then generate the file
+$pbdefdir/$project/pbconf/$version/$project.pb.  You will need to edit that file in order to run
+any of the later commands.
+
+=head2 cms2build
+
+The cms2build command takes your files from the content management system and makes the two tar
+files that are necessary for building files.  Before running this command, you need to run the
+newproj command, and edit the $project.pb configuration file.  In particular, you need to set the
+pburl, pbrepo, pbwf, pbpackager, projver, projtag, testver, deliver, and defpkgdir lines as
+described in the configuration file.  Then you can run a command like:
+
+    % pb -p $project -r $version cms2build
+
+To create the $pbdefdir/$project/delivery/$project-$version.{,pbconf}.tar.gz files, the
+$version-$projtag.pb and pbrc files in the same directory.
+
+=head2 build2pkg
+
+The build2pkg command takes the tar files created in the cms2build step and attempts to build the
+binary packages for your current operating system.  In order for this step to work, you may need to
+edit the files in one of the $pbdefdir/$project/pbconf/$version/$project/{deb,rpm,pkg} directories.
+Those files will be used to try to build your package.  Note that if you change those files, you
+need to re-run the cms2build step.
+
 =head1 AUTHORS
 
 The Project-Builder.org team L<http://trac.project-builder.org/> lead by Bruno Cornec L<mailto:bruno@project-builder.org>.
@@ -495,6 +542,7 @@ GetOptions("help|?|h" => \$opts{'h'},
 		"iso|i=s" => \$opts{'i'},
 		"version|V=s" => \$opts{'V'},
 		"keep|k" => \$opts{'k'},
+                "stop-on-error!" => \$Global::pb_stop_on_error,
 ) || pb_syntax(-1,0);
 
 if (defined $opts{'h'}) {
@@ -813,6 +861,9 @@ sub pb_cms2build {
 		pb_log(0,"Management of $pbpkg $pbver-$pbtag (rev $pbrev)\n");
 		die "Unable to get env var PBDESTDIR" if (not defined $ENV{'PBDESTDIR'});
 
+		# computes in which dir we have to work
+		my $dir = $defpkgdir->{$pbpkg};
+
 		my $dest = "$ENV{'PBDESTDIR'}/$pbpkg-$pbver";
 		# Create the structure if needed 
 		pb_mkdir_p($dest);
@@ -823,8 +874,6 @@ sub pb_cms2build {
 		# And generate some additional files
 		$OUTPUT_AUTOFLUSH=1;
 
-		# computes in which dir we have to work
-		my $dir = $defpkgdir->{$pbpkg};
 		$dir = $extpkgdir->{$pbpkg} if (not defined $dir);
 		$dir = $webdir->{$ENV{'PBPROJ'}} if (defined $web);
 		die "Variable \$dir not defined. Please report to dev team with log of a verbose run and this info ".Dumper($webdir) if (not defined $dir);
@@ -1335,10 +1384,11 @@ sub pb_build2pkg {
 				print SERIE "$f\n";
 			}
 			close(SERIE);
-			if ($debsrcfmt =~ /^1.*/) {
+                        my $patch_file = "debian/patches/pbapplypatch";
+			if ($debsrcfmt =~ /^1.*/ && -x $patch_file) {
 				# In that case we need to apply the patches ourselves locally
-				pb_system("cat debian/patches/pbapplypatch","APPLY","verbose");
-				pb_system("debian/patches/pbapplypatch","Applying patches to $pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'} tree");
+				pb_system("cat $patch_file","APPLY","verbose");
+				pb_system("$patch_file","Applying patches to $pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'} tree");
 			}
 			if (@f) {
 				# We have patches, so modify the name of files to be Debian compliant
@@ -2239,7 +2289,10 @@ sub pb_launchv {
 	pb_log(2,"DEBUG: pb_launchv($vtype,$v,$create,$snapme,$usesnap)\n");
 	die "No VM/VE/RM defined, unable to launch" if (not defined $v);
 	# Keep only the first VM in case many were given
-	$v =~ s/,.*//;
+        if ($v =~ /,/) {
+            print "WARNING: pruning to just the first of several vms listed ($v)\n";
+            $v =~ s/,.*//;
+        }
 
 	my $pbos = pb_distro_get_context($v);
 	
@@ -4000,10 +4053,12 @@ if ($pbos->{'type'} eq "rpm") {
 } elsif ($pbos->{'type'} eq "deb") {
 	my $changes = "";
 	foreach my $c (split(/ /,$made)) {
-		$changes .= " $ENV{'PBBUILDDIR'}/$c" if ($c =~ /\.changes$/);
+		$changes .= " $ENV{'PBBUILDDIR'}/$c" if ($c =~ /\.changes$/)
+                    && -f "$ENV{PBBUILDDIR}/$c";
 	}
 	my $debsigncmd = pb_check_req("debsign",1);
-	pb_system("$debsigncmd -m\'$ENV{'PBPACKAGER'}\' $changes","Signing DEB packages");
+	pb_system("$debsigncmd -m\'$ENV{'PBPACKAGER'}\' $changes","Signing DEB packages")
+            if $changes ne '';
 } else {
 	pb_log(0,"I don't know yet how to sign packages for type $pbos->{'type'}.\nPlease give feedback to dev team\n");
 }

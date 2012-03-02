@@ -809,7 +809,7 @@ my $vcscmd = pb_cms_cmd($scheme);
 
 if ((defined $testver) && (defined $testver->{$ENV{'PBPROJ'}}) && ($testver->{$ENV{'PBPROJ'}} =~ /true/i)) {
 	if (! -f "$dest/ChangeLog") {
-		open(CL,"> $dest/ChangeLog") || die "Unable to create $dest/ChangeLog";
+		open(CL,"> $dest/ChangeLog") || confess "Unable to create $dest/ChangeLog";
 		# We need a minimal version for debian type of build
 		print CL "\n";
 		print CL "\n";

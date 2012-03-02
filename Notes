@@ -1,13 +1,21 @@
 # Setup ~/.pbrc:
-pbconfurl lintel = file://home/anderse/.git/eric-lintel-pb-conf
+pbconfurl Lintel = file://home/anderse/.git/eric-lintel-pb-conf
 pbdefdir default = $ENV{HOME}/cache-project-builder
 vmpath default = $ENV{HOME}/cache-project-builder/qemu
 vepath default = $ENV{HOME}/cache-project-builder/chroot
 
 # initialize the project; the second lintel controls a name inside the ~pbdefdir/lintel directory
 # expect lots of errors from your vcs
-pb -p lintel -r 0.2012.02.28 newproj lintel
+pb -p Lintel -r 0.2012.02.28 newproj Lintel
 
 edit .../Lintel.pb
 changes in 781b5c0
 Create an origin remote and push to there.
+% pb -p Lintel -r 0.2012.02.28 cms2build
+# switch to centos-5 for vmlist, example uses rpm/mandriva.
+# vmlist is irrelevant, the build2pkg command builds for your running OS.
+# Lots of fiddling to get next bit to work.
+% pb -p Lintel -r 0.2012.02.28 build2pkg
+
+------
+pb -v -p Lintel -m debian-6.0-i386 newve
