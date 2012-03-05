@@ -19,3 +19,6 @@ Create an origin remote and push to there.
 
 ------
 pb -v -p Lintel -m debian-6.0-i386 newve
+
+update /etc/wgetrc to specify proxy
+add rbsmirrorsrv to ~/.pbrc

@@ -1,0 +1,10 @@
+Link from http://www.project-builder.org/support.shtml to wiki is wrong; should be to
+http://trac.project-builder.org/ not http://trac.mondorescue.org/
+
+http://trac.project-builder.org/ -- Getting section:
+  Note that the first one is the source and the second one is the pb-config to build itself?
+
+NetPerfExample:
+  spam: '<a class="ext-link" href="http://zolpo.com/life-insurance/"><span class="icon"> </span>life insurance quotes</a>'
+  typo: 'file from ou Configuration' => 'file from our Configuration'
+  typo: 'Again Project-Builder can will with those issues' => 'Again Project-Builder can fix all those issues'

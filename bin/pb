@@ -503,6 +503,10 @@ edit the files in one of the $pbdefdir/$project/pbconf/$version/$project/{deb,rp
 Those files will be used to try to build your package.  Note that if you change those files, you
 need to re-run the cms2build step.
 
+=head2 newve
+
+Prerequisite: cms2build
+
 =head1 AUTHORS
 
 The Project-Builder.org team L<http://trac.project-builder.org/> lead by Bruno Cornec L<mailto:bruno@project-builder.org>.
@@ -1780,9 +1784,12 @@ sub pb_send2target {
 
 	pb_log(0,"Sources handled ($cmt): $src\n");
 	pb_log(2,"values: ".Dumper(($host,$login,$dir,$port,$tmout,$path,$conf))."\n");
-	my ($sshhost,$sshlogin,$sshdir,$sshport) = pb_conf_get($host,$login,$dir,$port);
+	my ($sshhost,$sshdir) = pb_conf_get($host,$dir);
 	# Not mandatory...
 	$delivery->{$ENV{'PBPROJ'}} = "" if (not defined $delivery->{$ENV{'PBPROJ'}});
+        my ($sshport, $sshlogin) = pb_conf_get_if($port, $login);
+        $sshport->{$ENV{PBPROJ}} = 22 unless defined $sshport->{$ENV{PBPROJ}};
+        $sshlogin->{$ENV{PBPROJ}} = getpwuid($UID) unless defined $sshlogin->{$ENV{PBPROJ}};
 	my ($vtmout,$vepath);
 	# ...Except those in virtual context
 	if ($cmt =~ /^VE/) {
@@ -2045,8 +2052,8 @@ EOF
 	# should use a hash instead...
 	my ($shcmd,$cpcmd,$cptarget,$cp2target);
 	if ($cmt =~ /^VE/) {
-		my $tp = $vepath->{$ENV{'PBPROJ'}};
-		my $tpdir = "$tp/$pbos->{'name'}/$pbos->{'version'}/$pbos->{'arch'}";
+		my $tp = pb_path_expand($vepath->{$ENV{'PBPROJ'}});
+		my $tpdir = pb_path_expand("$tp/$pbos->{'name'}/$pbos->{'version'}/$pbos->{'arch'}");
 		my ($ptr) = pb_conf_get("vetype");
 		my $vetype = $ptr->{$ENV{'PBPROJ'}};
 		if ($vetype eq "chroot") {
@@ -2056,7 +2063,7 @@ EOF
 		}
 		$cpcmd = "sudo /bin/cp -r ";
 		# We need to get the home dir of the target account to deliver in the right place
-		open(PASS,"$tpdir/etc/passwd") || die "Unable to open $tpdir/etc/passwd";
+		open(PASS,"$tpdir/etc/passwd") || die "Unable to open $tpdir/etc/passwd: $!";
 		my $homedir = "";
 		while (<PASS>) {
 			my ($c1,$c2,$c3,$c4,$c5,$c6,$c7) = split(/:/);
@@ -2755,6 +2762,9 @@ pb_log(2,"$vtype: $ENV{$pbv}\n");
 return(\@v,$all);
 }
 
+# This function creates a giant script to configure a particular VM/VE/RM, it then copies the 
+# script to the target.
+#
 # Function to create a potentialy missing pb account on the VM/VE/RM, and adds it to sudo
 # Needs to use root account to connect to the VM/VE/RM
 # pb will take your local public SSH key to access
@@ -2858,13 +2868,13 @@ EOF
 		print SCRIPT << "EOF";
 # For VE we need a good null dev
 pb_system("rm -f /dev/null; mknod /dev/null c 1 3; chmod 777 /dev/null");
-EOF
-		print SCRIPT << "EOF";
 # For VE we first need to mount some FS
 pb_system("mount -t proc /proc /proc");
 
 EOF
-	}
+	} else {
+                die "Unknown virtual type $vtype";
+        }
 
 	if ($vtype =~ /(v|r)m/) {
 		print SCRIPT << 'EOF';
@@ -3014,6 +3024,7 @@ EOF
 	next if (/^$pbac->{$ENV{'PBPROJ'}}\\s+/);
 	next if (/^Defaults:$pbac->{$ENV{'PBPROJ'}}\\s+/);
 	next if (/^Defaults:root \!requiretty/);
+        next if (/^Default:root env_keep/);
 EOF
 	print SCRIPT << 'EOF';
 	s/Defaults[ \t]+requiretty//;
@@ -3026,7 +3037,8 @@ EOF
 print PBOUT "Defaults:$pbac->{$ENV{'PBPROJ'}} !requiretty\n";
 print PBOUT "Defaults:root !requiretty\n";
 # Keep proxy configuration while using sudo
-print PBOUT "Defaults:$pbac->{$ENV{'PBPROJ'}}    env_keep += \\\"http_proxy ftp_proxy\\\"\n";
+print PBOUT "Defaults:pb env_keep += \\\"http_proxy ftp_proxy\\\"\n";
+print PBOUT "Defaults:root env_keep += \\\"http_proxy ftp_proxy\\\"\n";
 EOF
 	# Try to restrict security to what is really needed
 	if ($vtype =~ /^vm/) {
@@ -3067,6 +3079,14 @@ EOF
 		print SCRIPT "pb_system(\"$ntpline\");\n";
 	}
 	# We may need a proxy configuration. Get it from the local env
+
+        # TODO: make this apply to the bootstrapping also.
+        my ($ftp_proxy_map, $http_proxy_map) = pb_conf_get_if('ftp_proxy', 'http_proxy');
+        my $ftp_proxy = pb_distro_get_param($pbos, $ftp_proxy_map);
+        my $http_proxy = pb_distro_get_param($pbos, $http_proxy_map);
+
+        $ENV{ftp_proxy} = $ftp_proxy if defined $ftp_proxy && $ftp_proxy ne '';
+        $ENV{http_proxy} = $http_proxy if defined $http_proxy && $http_proxy ne '';
 
 	if (defined $ENV{'http_proxy'}) {
 		print SCRIPT "\$ENV\{'http_proxy'\}=\"$ENV{'http_proxy'}\";\n";
