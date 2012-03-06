@@ -501,11 +501,58 @@ The build2pkg command takes the tar files created in the cms2build step and atte
 binary packages for your current operating system.  In order for this step to work, you may need to
 edit the files in one of the $pbdefdir/$project/pbconf/$version/$project/{deb,rpm,pkg} directories.
 Those files will be used to try to build your package.  Note that if you change those files, you
-need to re-run the cms2build step.
+need to re-run the cms2build step.  Then you can run a command like:
+
+    % pb -p $project -r $version build2pkg
+
+To create the files in $project/build that comprise your binary package(s).
 
 =head2 newve
 
-Prerequisite: cms2build
+The newve command creates a new virtual environment, i.e. a chrooted OS for building packages.
+Using a virtual environment is an efficient way to build packages on a related set of operating
+systems.  The OS's have to be related because the kernel will be shared.  Steps:
+
+=over 4
+
+=item Update ~/.pbrc
+
+Update your ~/.pbrc file to specify the vepath, velist, velogin, and vetype variables, e.g.:
+
+    vepath default = $ENV{HOME}/cache-project-builder/chroot
+    velist default = debian-6.0-i386
+    velogin default = pb
+    vetype default = chroot
+
+You may also choose to specify a mirror for the OS packages, and optionally http/ftp proxies.  You
+can specify the proxies either through environment variables ($http_proxy/$ftp_proxy) or in the
+configuration file.  The configuration file will override any environment variable settings.  For
+example, for debian and with a local squid proxy:
+
+    rbsmirrorsrv debian = http://mirrors1.kernel.org/debian/
+    http_proxy default = http://localhost:3128/
+    ftp_proxy default = http://localhost:3128/
+
+=item Run the cms2build command
+
+If you have deleted your $package/delivery directory, re-run the cms2build command as in the
+earlier step.  This step is necessary to generate the I<package>/delivery/pbrc file.
+
+=item Create the new virtual environment
+
+Initialize the new operating system.  This step will install the core OS packages for the virtual
+environment, e.g.:
+
+    % pb -v -p $project -m debian-6.0-i386 newve
+
+=back
+
+=head2 setupve
+
+The setupve command prepares a virtual environment for use by project builder.  In particular it
+installs project-builder from the packages into the virtual environment.  For example:
+
+    % pb -v -p $project -m debian-6.0-i386 setupve
 
 =head1 AUTHORS
 

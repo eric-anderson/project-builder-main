@@ -1,0 +1,9 @@
+Makefile
+Makefile.old
+blib
+build-stamp
+debian/files
+debian/project-builder.debhelper.log
+debian/project-builder.substvars
+debian/project-builder/
+pm_to_blib
