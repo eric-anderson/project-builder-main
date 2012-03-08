@@ -391,8 +391,6 @@ Create tar files for the website under your CMS.
 
 Purge the build and delivery directories related to the current project
 
-=back 
-
 =item B<cleanssh>
 
 Purge the ssh server of its packages (only for testver and test packages)
@@ -550,9 +548,56 @@ environment, e.g.:
 =head2 setupve
 
 The setupve command prepares a virtual environment for use by project builder.  In particular it
-installs project-builder from the packages into the virtual environment.  For example:
+installs project-builder from the packages into the virtual environment.  Two sub-steps are
+necessary:
+
+=over 4
+
+=item Update $project.pb
+
+You need to have a sshhost entry for setupve to work, so add one, even an invalid one, e.g.:
+
+    sshhost $project = foo.example.org
+
+=item Setup the virtual environment
 
     % pb -v -p $project -m debian-6.0-i386 setupve
+
+=back
+
+=head2 build2ve
+
+The build2ve command is similar to the build2pkg command in that it will take the sources created
+by cms2build and turn them into binary packages.  The command has two differences.  First, it
+creates the packages in a virtual environment, i.e. the one made by an earlier setupve setup.
+Second it copies the resulting packages to a repository and builds the repository meta-data needed.
+
+Two sub-steps are needed:
+
+=over 4
+
+=item Update $project.pb
+
+You need to have a valid sshdir and sshhost entry for build2ve to work, so add them.  Note that you
+need to be able to ssh from the host you run the command on to the repository host, preferably
+without needing to type in a password, so using ssh-agent or having a special passwordless
+project-builder ssh key will make this step easier.
+
+    sshhost $project = localhost
+    sshdir $project = $home/cache-project-builder/repos
+
+=item Build the packages and copy them to the repository
+
+    % pb -v -p $project -m debian-6.0-i386 build2ve
+
+=back
+
+*Debugging:* If the build fails (and you did not specify the --no-stop-on-error) option, then the
+ virtual environment and scripts should still be present and configured to build the package.  You
+ can run a command like 'sudo linux32 chroot $path bash' in order to get into the environment.  In
+ your log you should see a command like that.  From there you can go into the /home/pb directory as
+ the pb user and run the same style of pb commands as you did when doing build2pkg.  This will help
+ you figure out what has gone wrong in the build in the virtual environment.
 
 =head1 AUTHORS
 
@@ -1331,7 +1376,12 @@ sub pb_build2pkg {
 	chdir "$ENV{'PBBUILDDIR'}" || die "Unable to chdir to $ENV{'PBBUILDDIR'}";
 	my $made = ""; # pkgs made during build
 	my $pm;
-	$pm = new Parallel::ForkManager($pbparallel) if (defined $pbparallel);
+        my $all_ok = 1;
+        if (defined $pbparallel) {
+            $pm = new Parallel::ForkManager($pbparallel);
+            $pm->run_on_finish(sub { my ($pid, $code, $id, $signal, $dump) = @_;
+                                     $all_ok = 0 unless $code == 0 && $signal == 0 && $dump == 0; });
+        }
 
 	# We need to communicate info back from the children if parallel so prepare a dir for that
 	my $tmpd = "$ENV{'PBTMP'}/build.$$";
@@ -1453,15 +1503,28 @@ sub pb_build2pkg {
 			pb_system("dpkg-buildpackage -us -uc -rfakeroot","Building package","verbose");
 			# Get the name of the generated packages
 			open(LOG,"$ENV{'PBTMP'}/system.$$.log") || die "Unable to open $ENV{'PBTMP'}/system.$$.log";
+                        my @made;
 			while (<LOG>) {
-				chomp();
-				my $tmp = $_;
-				next if ($tmp !~ /^dpkg-deb.*:/);
-				$tmp =~ s|.*\.\./(.*)_(.*).deb.*|$1|;
-				$made="$made $tmp.dsc $tmp.tar.gz $tmp"."_*.deb $tmp"."_*.changes";
-			}
-			close(LOG);
+				chomp;
+				next unless /^dpkg-deb: building package .* in \`\.\.\/(\S+)\'\./o;
+                                push (@made, $1);
+                        }
+                        close(LOG);
+                        open(my $control, "debian/control") or die "Unable to open debian/control: $!";
 			chdir ".." || die "Unable to chdir to parent dir";
+                        system("pwd");
+                        while (<$control>) {
+                               next unless /^Source: (\S+)/o;
+                               foreach my $glob (("$1\_*.changes", "$1\_*.dsc", "$1\_*.tar.gz")) {
+                                       my @file = glob($glob);
+                                       die "Missing file for $glob" unless @file > 0;
+                                       die "Too many files for $glob" if @file > 1;
+                                       push (@made, $file[0]);
+                                }
+			}
+                        system("cat $ENV{PBTMP}/system.$$.log");
+                        map { die "missing file $_" unless -f $_ } @made;
+                        $made = join(' ', @made);
 			pb_rm_rf("$pbpkg-$pbver");
 		} elsif ($pbos->{'type'} eq "ebuild") {
 			my @ebuildfile;
@@ -1617,6 +1680,8 @@ sub pb_build2pkg {
 		foreach my $f (<$tmpd/*>) {
 			$made .= " ".pb_get_content($f);
 		}
+                die "Aborting, one or more of the children failed.\n"
+                    if !$all_ok && $Global::pb_stop_on_error;
 		pb_rm_rf($tmpd);
 	}
 
@@ -1657,7 +1722,9 @@ sub pb_build2pkg {
 	}
 
 	# Keep track of what is generated so that we can get them back from VMs/RMs
-	open(KEEP,"> $ENV{'PBBUILDDIR'}/pbgen-$ENV{'PBPROJVER'}-$ENV{'PBPROJTAG'}-$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'}") || die "Unable to create $ENV{'PBBUILDDIR'}/pbgen-$ENV{'PBPROJVER'}-$ENV{'PBPROJTAG'}-$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'}";
+        my $pbkeep = "$ENV{'PBBUILDDIR'}/pbgen-$ENV{'PBPROJVER'}-$ENV{'PBPROJTAG'}-$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'}";
+
+	open(KEEP,"> $pbkeep") || die "Unable to create $pbkeep: $!";
 	print KEEP "$made\n";
 	close(KEEP);
 }
@@ -2104,7 +2171,11 @@ EOF
 		my ($ptr) = pb_conf_get("vetype");
 		my $vetype = $ptr->{$ENV{'PBPROJ'}};
 		if ($vetype eq "chroot") {
-			$shcmd = "sudo /usr/sbin/chroot $tpdir /bin/su - $mac -c ";
+                        my $host_os = pb_distro_get_context();
+                        my $linux32 = '';
+                        $linux32 = '/usr/bin/linux32'
+                            if $pbos->{arch} eq 'i386' && $host_os->{arch} eq 'x86_64';
+			$shcmd = "sudo $linux32 /usr/sbin/chroot $tpdir /bin/su - $mac -c ";
 		} elsif ($vetype eq "schroot") {
 			$shcmd = "schroot $tp -u $mac -- ";
 		}
@@ -2141,10 +2212,17 @@ EOF
 		$cptarget = "CPAN";
 	} else {
 		my $keyfile = pb_ssh_get(0);
+                my $keyopt = defined $keyfile ? "-i $keyfile" : "";
 		my $sshcmd = pb_check_req("ssh",1);
 		my $scpcmd = pb_check_req("scp",1);
-		$shcmd = "$sshcmd -i $keyfile -q -o UserKnownHostsFile=/dev/null -p $nport $mac";
-		$cpcmd = "$scpcmd -i $keyfile -p -o UserKnownHostsFile=/dev/null -P $nport";
+                # TODO-reviewer: I can't figure out why the known hosts file is being set to
+                # null.  That has the net effect of causing ssh to generate a authenticity check,
+                # and means that you have to type in yes in order for the command to work even
+                # if you already have the proper information set up.
+                # '-o UserKnownHostsFile=/dev/null' was before the port option in the next two
+                # commands.
+		$shcmd = "$sshcmd $keyopt -q -p $nport $mac";
+		$cpcmd = "$scpcmd $keyopt -p -P $nport";
 		$cptarget = "$mac:$tdir";
 		if ($cmt =~ /^(V|R)Mbuild/) {
 			$cp2target = "$mac:$bdir";
@@ -2497,6 +2575,8 @@ sub pb_date2v {
 my $vtype = shift;
 my $pbos = shift;
 
+return 'true' if ($vtype) =~ /^ve/o; # virtual environment gets time from parent OS.
+
 my ($ntp) = pb_conf_get_if($vtype."ntp");
 my $vntp = $ntp->{$ENV{'PBPROJ'}} if (defined $ntp);
 my $ntpline = undef;
@@ -2515,6 +2595,7 @@ my $dateline = "sudo /bin/date $upddate";
 if (defined $ntpline) {
 	return($ntpline);
 } else {
+        die "This is setting the time on Eric's laptop very wrong for some unknown reason, probably because in the debian chroot the timezone is UTC, but in the parent OS it is PST, and it looks like the string is passed through.  A possible fix would be to use UTC everywhere.  Also can't figure out why the time is set to the future unless it's some guess about how long the script will take to get there.";
 	return($dateline);
 }
 }
@@ -2559,6 +2640,7 @@ foreach my $v (@$v) {
 		$verbose .= "-v ";
 		$i++;
 	}
+        print SCRIPT "set -e\n" if $Global::pb_stop_on_error;
 	# Activate script verbosity if at least 2 for pbdebug
 	print SCRIPT "set -x\n" if ($i gt 1);
 	# Quiet if asked to be so on the original system
@@ -2575,9 +2657,9 @@ foreach my $v (@$v) {
 		print SCRIPT "cd ..\n";
 	}
 
-	# VE needs a good /proc
+	# VE needs a good /proc, tolerate one being potentially left around after a failure
 	if ($vtype eq "ve") {
-		print SCRIPT "sudo /bin/mount -t proc /proc /proc\n";
+		print SCRIPT "[ -d /proc/1 ] || sudo /bin/mount -t proc /proc /proc\n";
 	}
 
 	# Get distro context
@@ -2585,8 +2667,7 @@ foreach my $v (@$v) {
 	
 	my $ntpline = pb_date2v($vtype,$pbos);
 	print SCRIPT "# Time sync\n";
-	print SCRIPT "echo 'setting up date with '";
-	print SCRIPT "echo $ntpline\n";
+	print SCRIPT "echo setting up date with '$ntpline'\n";
 	print SCRIPT "$ntpline\n";
 	# Use potential local proxy declaration in case we need it to download repo, pkgs, ...
 	if (defined $ENV{'http_proxy'}) {
@@ -3242,20 +3323,20 @@ EOF
 	}
 
 	# Adds pb_distro_get_context and all functions needed from ProjectBuilder::Distribution, Conf and Base
-	foreach my $d (@INC) {
-		my @f = ("$d/ProjectBuilder/Base.pm","$d/ProjectBuilder/Distribution.pm","$d/ProjectBuilder/Conf.pm");
-		foreach my $f (@f) {
-			if (-f "$f") {
-				open(PBD,"$f") || die "Unable to open $f";
-				while (<PBD>) {
-					next if (/^package/);
-					next if (/^use Exporter/);
-					next if (/^use ProjectBuilder::/);
-					next if (/^our /);
-					print SCRIPT $_;
-				}
-				close(PBD);
-			}
+        foreach my $sub (qw{ProjectBuilder/Base.pm ProjectBuilder/Distribution.pm ProjectBuilder/Conf.pm}) {
+                foreach my $dir (@INC) {
+                        next unless -f "$dir/$sub";
+
+                        open(PBD,"$dir/$sub") || die "Unable to open $dir/$sub for read: $!";
+                        while (<PBD>) {
+                                next if (/^package/);
+                                next if (/^use Exporter/);
+                                next if (/^use ProjectBuilder::/);
+                                next if (/^our /);
+                                print SCRIPT $_;
+                        }
+                        close(PBD);
+                        last; # Only include the first copy of each file.
 		}
 	}
 	# Use a fake pb_version_init version here
@@ -3817,6 +3898,9 @@ sub pb_ssh_get {
 
 my $create = shift || 0;	# Do not create keys by default
 
+# use ssh-agent if possible.
+return undef if $create == 0 && defined $ENV{SSH_AUTH_SOCK};
+
 # Check the SSH environment
 my $keyfile = undef;
 
@@ -4124,7 +4208,7 @@ if ($pbos->{'type'} eq "rpm") {
                     && -f "$ENV{PBBUILDDIR}/$c";
 	}
 	my $debsigncmd = pb_check_req("debsign",1);
-	pb_system("$debsigncmd -m\'$ENV{'PBPACKAGER'}\' $changes","Signing DEB packages")
+	pb_system("$debsigncmd -m\'$ENV{'PBPACKAGER'}\' $changes","Signing DEB packages", '', 1)
             if $changes ne '';
 } else {
 	pb_log(0,"I don't know yet how to sign packages for type $pbos->{'type'}.\nPlease give feedback to dev team\n");

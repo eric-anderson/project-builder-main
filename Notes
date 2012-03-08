@@ -22,3 +22,8 @@ pb -v -p Lintel -m debian-6.0-i386 newve
 
 update /etc/wgetrc to specify proxy
 add rbsmirrorsrv to ~/.pbrc
+
+
+Tried -k to keep around the pbscript.### file in the chroot, but that didn't seem to work.
+--------------------------------------
+TODO: check on sbx2build
