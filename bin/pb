@@ -1452,7 +1452,10 @@ sub pb_build2pkg {
 
 			chdir "$pbpkg-$pbver" || die "Unable to chdir to $pbpkg-$pbver";
 			pb_rm_rf("debian");
-			symlink "pbconf/$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'}","debian" || die "Unable to symlink to pbconf/$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'}";
+                        my $confdir = "pbconf/$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'}";
+                        die "Configuration directory $confdir is not a directory"
+                                unless -d $confdir;
+                        symlink $confdir ,"debian" || die "Unable to symlink 'debian' to $confdir";
 			chmod 0755,"debian/rules";
 
 			# We need to handle potential patches to upstream sources
@@ -1465,7 +1468,7 @@ sub pb_build2pkg {
 			if (-f $debsrcfile) {
 				$debsrcfmt = pb_get_content($debsrcfile);
 			}
-				
+
 			if ($debsrcfmt =~ /^3.*quilt/) {
 				# If we use quilt to manage patches, we then setup the env correctly 
 				# as per http://pkg-perl.alioth.debian.org/howto/quilt.html
@@ -2254,13 +2257,13 @@ EOF
 	# It's already ready for CPAN
 	my $shcmdbase = $shcmd;
 	if ($cmt !~ /^CPAN/) {
-		$shcmd .= " \"echo \'cd $tdir ; if [ -x $pbscript ]; then ./$pbscript; fi ; rm -f ./$pbscript\' | bash\"";
+		$shcmd .= " \"echo \'cd $tdir ; [ -x $pbscript ] && ./$pbscript; rm -f ./$pbscript\' | bash -e\"";
 	}
 	my $cmdverb = "verbose";
 	if (($cmt eq "Announce") || ($cmt eq "CPAN")) {
 		$cmdverb = undef;
 	}
-	pb_system("$shcmd","Executing pbscript on $cptarget if needed",$cmdverb);
+	pb_system($shcmd,"Executing pbscript on $cptarget if needed",$cmdverb);
 	if ($cmt =~ /^(V[EM]|RM)build/) {
 		# Get back info on pkg produced, compute their name and get them from the VM/RM
 		pb_system("$cpcmd $cp2target/pbgen-$ENV{'PBPROJVER'}-$ENV{'PBPROJTAG'}-$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'} $ENV{'PBBUILDDIR'}/pbgen-$ENV{'PBPROJVER'}-$ENV{'PBPROJTAG'}.$$ 2> /dev/null","Get package names in $cp2target");
@@ -2653,7 +2656,7 @@ foreach my $v (@$v) {
 
 	if ($action eq "build") {
 		print SCRIPT "# Preparation for pb\n";
-		print SCRIPT "mv .pbrc \$HOME\n";
+		print SCRIPT "cp .pbrc \$HOME\n";
 		print SCRIPT "cd ..\n";
 	}
 
@@ -2720,6 +2723,7 @@ foreach my $v (@$v) {
 		print SCRIPT pb_get_content("$ENV{'PBDESTDIR'}/pb$vtype".".post");
 	}
 
+        print SCRIPT q{echo "********** Successful exit of script $$ *********************"}, "\n";
 	close(SCRIPT);
 	chmod 0755,"$ENV{'PBDESTDIR'}/pbscript.$$";
 	
