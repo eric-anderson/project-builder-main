@@ -1453,7 +1453,7 @@ sub pb_build2pkg {
 			chdir "$pbpkg-$pbver" || die "Unable to chdir to $pbpkg-$pbver";
 			pb_rm_rf("debian");
                         my $confdir = "pbconf/$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'}";
-                        die "Configuration directory $confdir is not a directory"
+                        die "Configuration directory $confdir is not a directory; is os description listed in your {ve,vm,rm}list values?"
                                 unless -d $confdir;
                         symlink $confdir ,"debian" || die "Unable to symlink 'debian' to $confdir";
 			chmod 0755,"debian/rules";
@@ -2706,7 +2706,8 @@ foreach my $v (@$v) {
 	if (($action eq "test") && (! -x "$ENV{'PBDESTDIR'}/pbtest")) {
 			die "No test script ($ENV{'PBDESTDIR'}/pbtest) found when in test mode. Aborting ...";
 	}
-	print SCRIPT "pb $verbose -p $ENV{'PBPROJ'} $action"."2pkg $p\n";
+        print SCRIPT "[ -f delivery/$ENV{PBPROJ}.pb ]\n";
+	print SCRIPT "pb $verbose -r `pwd`/delivery -p $ENV{'PBPROJ'} $action"."2pkg $p\n";
 
 	if ($vtype eq "ve") {
 		print SCRIPT "sudo /bin/umount /proc\n";
@@ -2964,6 +2965,7 @@ our $pblocale = "";
 pb_log_init($pbdebug, $pbLOG);
 EOF
 	print SCRIPT << "EOF";
+\$Global::pb_stop_on_error = $Global::pb_stop_on_error;
 pb_temp_init($pbkeep);
 
 EOF
