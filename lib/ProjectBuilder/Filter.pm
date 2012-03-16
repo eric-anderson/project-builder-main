@@ -118,13 +118,39 @@ if (@ffiles) {
 		open(CONF,$f) || next;
 		while(<CONF>)  {
 			if (/^\s*([A-z0-9-_]+)\s+([[A-z0-9-_]+)\s*=\s*(.+)$/) {
-				pb_log(3,"DEBUG creating entry $1, key $2, value $3\n");
-				$h{$1}{$2}=$3;
-			}
+                                my ($what, $var, $value) = ($1, $2, $3);
+				pb_log(3,"DEBUG creating entry $what, key $var, value $value\n");
+                                while ($value =~ s/\\\s*$//o) {
+                                        $_ = <CONF>;
+                                        die "Still processing continuations for $what $var at EOF" unless defined $_;
+                                        s/[\r\n]//go;
+                                        $value .= "\n$_";
+                                }
+
+				$h{$what}{$var}=$value;
+                        } elsif (/^\s*#/o || /^\s*$/o) {
+                                # ignore
+                        } else {
+                                chomp;
+                                warn "unexpected line '$_' in $f";
+                        }
 		}
 		close(CONF);
 	}
 	$ptr = $h{"filter"};
+        # TODO-reviewer: where is the filter stuff documented?  I added transform, but don't know
+        # where to document it.
+        if (defined $h{transform}) {
+                while (my ($out_key, $spec) = each %{$h{transform}}) {
+                        die "Unknown transform for $out_key '$spec' expected <out-key> <transform>" unless $spec =~ /^([\w\-]+)\s+(.+)$/;
+                        my ($in_key, $expr) = ($1, $2);
+                        local $_ = $ptr->{$in_key} || '';
+                        eval $expr;
+                        die "Error evaluating tranform for $out_key ($expr): $@" if $@;
+                        $ptr->{$out_key} = $_;
+                        pb_log(2, "Transform $in_key to $out_key\n$ptr->{$in_key}\n$ptr->{$out_key}\n");
+                }
+        }
 }
 pb_log(2,"DEBUG f:".Dumper($ptr)."\n") if (defined $ptr);
 return($ptr);

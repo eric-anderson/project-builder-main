@@ -496,14 +496,28 @@ $version-$projtag.pb and pbrc files in the same directory.
 =head2 build2pkg
 
 The build2pkg command takes the tar files created in the cms2build step and attempts to build the
-binary packages for your current operating system.  In order for this step to work, you may need to
-edit the files in one of the $pbdefdir/$project/pbconf/$version/$project/{deb,rpm,pkg} directories.
-Those files will be used to try to build your package.  Note that if you change those files, you
-need to re-run the cms2build step.  Then you can run a command like:
+binary packages for your current operating system.  There are two steps:
+
+=over 4
+
+=item Update your filters and build files.
+
+You probably need to edit the files describing the build steps in one of the
+$pbdefdir/$project/pbconf/$version/$project/{deb,rpm,pkg} directories and the filters in
+$pbdefdir/$project/pbconf/$version/pbfilter.  Note that you can define additional filters and
+transforms in the *.pbf files.  The build files will be filtered by the filters defined in the
+*.pbf files to generate the inputs to the build step.  Therefore, if you change those files, you
+need to re-run the cms2build step.
+
+=item Build the package.
+
+Then you can run a command like:
 
     % pb -p $project -r $version build2pkg
 
 To create the files in $project/build that comprise your binary package(s).
+
+=back
 
 =head2 newve
 
@@ -521,6 +535,11 @@ Update your ~/.pbrc file to specify the vepath, velist, velogin, and vetype vari
     velist default = debian-6.0-i386
     velogin default = pb
     vetype default = chroot
+
+If you are building for rpm style OS's, update the verpmtype option, and install the appropriate
+tool.
+
+    verpmtype default = rpmbootstrap
 
 You may also choose to specify a mirror for the OS packages, and optionally http/ftp proxies.  You
 can specify the proxies either through environment variables ($http_proxy/$ftp_proxy) or in the
@@ -572,7 +591,7 @@ by cms2build and turn them into binary packages.  The command has two difference
 creates the packages in a virtual environment, i.e. the one made by an earlier setupve setup.
 Second it copies the resulting packages to a repository and builds the repository meta-data needed.
 
-Two sub-steps are needed:
+Three sub-steps are needed:
 
 =over 4
 
@@ -585,6 +604,16 @@ project-builder ssh key will make this step easier.
 
     sshhost $project = localhost
     sshdir $project = $home/cache-project-builder/repos
+
+You may also need to specify additional repository files to use or rpms to install.  Note the URL
+for repositories is not the URL of the repository, but the URL of a file that can be put in the
+yum.repos.d or apt.sources.d directory.
+
+    addrepo centos-5-i386 = http://localhost/pb/centos-extras.repo,http://mirror.centos.org/centos/5/extras/i386/RPMS/chrpath-0.13-3.el5.centos.i386.rpm
+
+=item Update your filters and build files
+
+You may need to update your filter files (*.pbf) as in the build2pkg step if you are building for a new OS or architecture.
 
 =item Build the packages and copy them to the repository
 
@@ -2243,7 +2272,12 @@ EOF
 
 	# For VE we need to change the owner manually
 	if ($cmt =~ /^VE/) {
-		pb_system("$shcmd \"sudo chown -R $mac $tdir\"","Adapt owner in $tdir to $mac");
+                # Centos5.8 can't sudo until we fix the sudoers file because we have no tty.
+                # However if we are su'ing to pb then we need to sudo again.  TODO-reviewer:
+                # is there a cleaner way to do this fix?
+                my $sudo = 'sudo';
+                $sudo = '' if $shcmd =~ /sudo/o && $shcmd !~ m!/bin/su !;
+		pb_system("$shcmd \"$sudo chown -R $mac $tdir\"","Adapt owner in $tdir to $mac");
 	}
 
 	# Use the right script name depending on context
@@ -2430,7 +2464,14 @@ sub pb_launchv {
         }
 
 	my $pbos = pb_distro_get_context($v);
-	
+
+        my ($ftp_proxy_map, $http_proxy_map) = pb_conf_get_if('ftp_proxy', 'http_proxy');
+        my $ftp_proxy = pb_distro_get_param($pbos, $ftp_proxy_map);
+        my $http_proxy = pb_distro_get_param($pbos, $http_proxy_map);
+
+        $ENV{ftp_proxy} = $ftp_proxy if defined $ftp_proxy && $ftp_proxy ne '';
+        $ENV{http_proxy} = $http_proxy if defined $http_proxy && $http_proxy ne '';
+
 	# Launch the VMs/VEs
 	if ($vtype eq "vm") {
 		die "-i iso parameter needed" if (((not defined $iso) || ($iso eq "")) && ($create != 0));
@@ -3003,7 +3044,7 @@ EOF
 # For VE we need a good null dev
 pb_system("rm -f /dev/null; mknod /dev/null c 1 3; chmod 777 /dev/null");
 # For VE we first need to mount some FS
-pb_system("mount -t proc /proc /proc");
+pb_system("mount -t proc /proc /proc") unless -d "/proc/$$";
 
 EOF
 	} else {
@@ -3161,7 +3202,7 @@ EOF
         next if (/^Default:root env_keep/);
 EOF
 	print SCRIPT << 'EOF';
-	s/Defaults[ \t]+requiretty//;
+	s/Defaults\s+requiretty/# disable Defaults: requiretty/;
 	print PBOUT $_;
 }
 close(PBFILE);
@@ -3214,7 +3255,6 @@ EOF
 	}
 	# We may need a proxy configuration. Get it from the local env
 
-        # TODO: make this apply to the bootstrapping also.
         my ($ftp_proxy_map, $http_proxy_map) = pb_conf_get_if('ftp_proxy', 'http_proxy');
         my $ftp_proxy = pb_distro_get_param($pbos, $ftp_proxy_map);
         my $http_proxy = pb_distro_get_param($pbos, $http_proxy_map);
@@ -3272,6 +3312,8 @@ EOF
 			}
 			$cmdget = "mv /tmp/ProjectBuilder-$pbver1.tar.gz ProjectBuilder-latest.tar.gz ; mv /tmp/project-builder-$pbver2.tar.gz project-builder-latest.tar.gz";
 		} else {
+                        # TODO-reviewer: shouldn't we have a variable to specify the source file?
+                        # And shouldn't we be getting the one that matches the current pb version?
 			$cmdget = "wget --passive-ftp ftp://ftp.project-builder.org/src/ProjectBuilder-latest.tar.gz; wget --passive-ftp ftp://ftp.project-builder.org/src/project-builder-latest.tar.gz";
 		}
 		print SCRIPT << 'EOF';
