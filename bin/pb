@@ -16,6 +16,7 @@ use strict 'vars';
 # Additional required modules only used locally are called with a require
 # in their respective section
 use Getopt::Long qw(:config auto_abbrev no_ignore_case);
+use Carp 'cluck';
 use Data::Dumper;
 use English;
 use File::Basename;
@@ -1083,7 +1084,10 @@ sub pb_cms2build {
 			}
 
 			# Try to use // processing here
+                        my $all_ok = 1;
 			my $pm = new Parallel::ForkManager($pbparallel) if (defined $pbparallel);
+                        $pm->run_on_finish(sub { my ($pid, $code, $id, $signal, $dump) = @_;
+                                                 $all_ok = 0 unless $code == 0 && $signal == 0 && $dump == 0; });
 
 			pb_log(0,"Preparing delivery ...\n");
 			foreach my $v (keys %virt) {
@@ -1210,6 +1214,8 @@ sub pb_cms2build {
 			}
 			# In the parent, we need to get the result from the children
 			$pm->wait_all_children if (defined $pbparallel);
+                        die "Aborting, one or more of the children failed."
+                                if !$all_ok && $Global::pb_stop_on_error;
 			my $made = "";
 			my %h = ();
 			my %tmp;
@@ -1712,8 +1718,8 @@ sub pb_build2pkg {
 		foreach my $f (<$tmpd/*>) {
 			$made .= " ".pb_get_content($f);
 		}
-                die "Aborting, one or more of the children failed.\n"
-                    if !$all_ok && $Global::pb_stop_on_error;
+                die "Aborting, one or more of the children failed."
+                        if !$all_ok && $Global::pb_stop_on_error;
 		pb_rm_rf($tmpd);
 	}
 
@@ -2264,7 +2270,7 @@ EOF
 	my $logres = "";
 	# Do not touch when just announcing
 	if (($cmt ne "Announce") && ($cmt ne "CPAN")) {
-		pb_system("$shcmd \"mkdir -p $tdir ; cd $tdir ; echo \'for i in $basesrc; do if [ -f \$i ]; then rm -f \$i; fi; done\ ; $cmd' | bash\"","Preparing $tdir on $cptarget");
+		pb_system("$shcmd \"mkdir -p $tdir ; cd $tdir ; echo \'for i in $basesrc; do if [ -f \$i ]; then rm -f \$i; fi; done\ ; $cmd' | bash -e\"","Preparing $tdir on $cptarget");
 	} else {
 		$logres = "> ";
 	}
@@ -2276,7 +2282,8 @@ EOF
                 # However if we are su'ing to pb then we need to sudo again.  TODO-reviewer:
                 # is there a cleaner way to do this fix?
                 my $sudo = 'sudo';
-                $sudo = '' if $shcmd =~ /sudo/o && $shcmd !~ m!/bin/su !;
+                #              already sudo'ing        and not su'ing         unless it's to root.
+                $sudo = '' if $shcmd =~ /sudo/o && ($shcmd !~ m!/bin/su ! || $shcmd =~ m!/bin/su - root!);
 		pb_system("$shcmd \"$sudo chown -R $mac $tdir\"","Adapt owner in $tdir to $mac");
 	}
 
@@ -2382,7 +2389,7 @@ EOF
 		if ($pbos->{'type'} eq "pkg") {
 			$hoption = "" ;
 		}
-		pb_system("$shcmdbase \"sudo $hpath $hoption \"; $tm ; echo \'if [ -d /proc/$vmpid ]; then kill -9 $vmpid; fi \' | bash ; sleep 10","VM $v halt (pid $vmpid)");
+		pb_system("$shcmdbase \"sudo $hpath $hoption \"; $tm ; echo \'if [ -d /proc/$vmpid ]; then kill -9 $vmpid; fi \' | bash -e && sleep 10","VM $v halt (pid $vmpid)");
 	}
 	if (($cmt =~ /^VE/) && ($snapme != 0)) {
 		my $tpdir = "$vepath->{$ENV{'PBPROJ'}}/$pbos->{'name'}/$pbos->{'version'}/$pbos->{'arch'}";
@@ -2659,11 +2666,16 @@ $pbparallel = pb_set_parallel($vtype);
 
 my ($vmexist,$vmpid) = (undef,undef);
 my $pm;
+my $all_ok = 1;
 if (defined $pbparallel) {
 	$pm = new Parallel::ForkManager($pbparallel);
 
 	# Set which port the VM/RM will use to communicate
 	$pm->run_on_start(\&pb_set_port);
+        $pm->run_on_finish(sub { my ($pid, $code, $id, $signal, $dump) = @_;
+                                 unless ($code == 0 && $signal == 0 && $dump == 0) {
+                                         print "ERROR: pid $pid failed\n";
+                                 }});
 }
 
 my $counter = 0;
@@ -2791,6 +2803,8 @@ foreach my $v (@$v) {
 	$pm->finish if (defined $pbparallel);
 }
 $pm->wait_all_children if (defined $pbparallel);
+die "Aborting, one or more of the children failed."
+        if !$all_ok && $Global::pb_stop_on_error;
 }
 
 
@@ -2957,11 +2971,14 @@ my $pbscript = "$ENV{'PBDESTDIR'}/setupv";
 $pbparallel = pb_set_parallel($vtype);
 
 my $pm;
+my $all_ok = 1;
 if (defined $pbparallel) {
 	$pm = new Parallel::ForkManager($pbparallel);
 
 	# Set which port the VM/RM will use to communicate
 	$pm->run_on_start(\&pb_set_port);
+        $pm->run_on_finish(sub { my ($pid, $code, $id, $signal, $dump) = @_;
+                                 $all_ok = 0 unless $code == 0 && $signal == 0 && $dump == 0; });
 }
 
 my $counter = 0;
@@ -3326,7 +3343,7 @@ foreach my $m (split(/,/,$perldep)) {
 	next if ($m =~ /^\s*$/);
 	my $dir = $m;
 	$dir =~ s/-.*//;
-	pb_system("echo \"rm -rf $m* ; wget http://search.cpan.org/CPAN/modules/by-module/$dir/$m-$osperlver->{$m}.tar.gz ; gzip -cd $m-$osperlver->{$m}.tar.gz | tar xf - ; cd $m* ; if [ -f Build.PL ]; then perl Build.PL; ./Build ; ./Build install ; else perl Makefile.PL; make ; make install ; fi; cd .. ; rm -rf $m*\" | bash" ,"Installing perl module $m-$osperlver->{$m}");
+	pb_system("echo \"rm -rf $m* ; wget http://search.cpan.org/CPAN/modules/by-module/$dir/$m-$osperlver->{$m}.tar.gz ; gzip -cd $m-$osperlver->{$m}.tar.gz | tar xf - ; cd $m* ; if [ -f Build.PL ]; then perl Build.PL; ./Build ; ./Build install ; else perl Makefile.PL; make ; make install ; fi; cd .. ; rm -rf $m*\" | bash -e" ,"Installing perl module $m-$osperlver->{$m}");
 }
 EOF
 		print SCRIPT << 'EOF';
@@ -3411,6 +3428,8 @@ EOF
 	$pm->finish if (defined $pbparallel);
 }
 $pm->wait_all_children if (defined $pbparallel);
+die "Aborting, one or more of the children failed."
+       if !$all_ok && $Global::pb_stop_on_error;
 return;
 }
 
