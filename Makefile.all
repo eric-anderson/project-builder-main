@@ -1,0 +1,78 @@
+CHROOT = /home/anderse/cache-project-builder/chroot/centos/5/x86_64
+PACKAGES = rpm-packages
+#CHROOT_INST = deb-chroot-inst
+CHROOT_INST = rpm-chroot-inst
+# CHROOT_INST = noop
+RPMDIR = $(HOME)/projects/special-build/rpms
+
+help:
+	@echo "make all # both local and chroot-inst"
+	@echo "make local"
+	@echo "make chroot-inst"
+	@echo "make status"
+	@echo "make difftool"
+	@echo "make commit"
+	@echo "make push"
+
+all: local chroot-inst
+
+noop:
+
+local:
+	for i in library main rpmbootstrap; do \
+		(cd $$i && perl Makefile.PL PREFIX=$$BUILD_OPT && make && make install); \
+	done
+	[ `pb --help 2>&1 | grep 'Version PBVER-PBREV' | wc -l` = 1 ]
+
+deb-packages:
+	-cd library && fakeroot ./debian/rules clean
+	-cd main && fakeroot ./debian/rules clean
+	cd library && dpkg-buildpackage -us -uc
+	cd main && dpkg-buildpackage -us -uc
+	cp libproj*.* project-build*.* /var/www/pb-deb/pool
+	cd /var/www/pb-deb && make
+
+rpm-packages:
+	-cd library && fakeroot ./debian/rules clean
+	-cd main && fakeroot ./debian/rules clean
+	ln -snf main project-builder-0.11.3.99
+	tar cvvhf - project-builder-0.11.3.99 | gzip -1v >$(RPMDIR)/SOURCES/project-builder-0.11.3.99.tar.gz
+	rpmbuild -ba $(RPMDIR)/SPECS/project-builder.spec
+	ln -snf library ProjectBuilder-0.11.3.99
+	tar cvvhf - ProjectBuilder-0.11.3.99 | gzip -1v >$(RPMDIR)/SOURCES/ProjectBuilder-0.11.3.99.tar.gz
+	rpmbuild -ba $(RPMDIR)/SPECS/perl-ProjectBuilder.spec
+	cp $(RPMDIR)/RPMS/noarch/*0.11.3.99-1.noarch.rpm /var/www/pb-rpm/RPMS
+	cd /var/www/pb-rpm && createrepo .
+
+packages: $(PACKAGES)
+
+status:
+	cd library && git status
+	cd main && git status
+	cd $(HOME)/cache-project-builder/Lintel && git status
+
+difftool:
+	cd library && git difftool
+	cd main && git difftool
+	cd $(HOME)/cache-project-builder/Lintel && git difftool
+
+commit:
+	cd library && (git commit -a &) && sleep 1 && git difftool HEAD && wait
+	cd main && (git commit -a &) && sleep 1 && git difftool HEAD && wait
+	cd $(HOME)/cache-project-builder/Lintel && (git commit -a &) && sleep 1 && git difftool HEAD && wait
+
+push:
+	cd library && git push
+	cd main && git push
+	cd $(HOME)/cache-project-builder/Lintel && git push
+
+deb-chroot-inst: deb-packages
+	cp libprojectbuilder-perl_0.11.3-2_all.deb  project-builder_0.11.3-2_all.deb $(CHROOT)/tmp
+	sudo chroot $(CHROOT) dpkg -i tmp/libprojectbuilder-perl_0.11.3-2_all.deb  tmp/project-builder_0.11.3-2_all.deb
+
+rpm-chroot-inst: rpm-packages
+	cp $(RPMDIR)/RPMS/noarch/perl-ProjectBuilder-0.11.3.99-1.noarch.rpm $(RPMDIR)/RPMS/noarch/project-builder-0.11.3.99-1.noarch.rpm $(CHROOT)/tmp
+	-sudo chroot $(CHROOT) rpm -e project-builder perl-ProjectBuilder
+	sudo chroot $(CHROOT) rpm -U --verbose tmp/perl-ProjectBuilder-0.11.3.99-1.noarch.rpm tmp/project-builder-0.11.3.99-1.noarch.rpm
+
+chroot-inst: $(CHROOT_INST)
