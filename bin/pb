@@ -10,6 +10,7 @@
 # Syntax: see at end
 
 use strict 'vars';
+use lib '/usr/share/perl5'; # force opensuse to have this in the library path; 11.4 has no "common" entries in its default perl path, they are all perl-version-specific.
 
 # The modules mentioned here are required by pb when used both 
 # locally or inside a VE/VM/RM
@@ -3377,7 +3378,7 @@ pb_system("umount /proc");
 # Create a basic network file if not already there
 
 my $nf="/etc/sysconfig/network";
-if ((! -f $nf) && ($pbos->{'type'} eq "rpm")) {
+if ((! -e $nf) && ($pbos->{'type'} eq "rpm")) { # TODO-reviewer: I think this is redhat specific, opensuse 11.4 has it as a directory, so this would be wrong if it wasn't present anyway
 	open(NF,"> $nf") || die "Unable to create $nf";
 	print NF "NETWORKING=yes\n";
 	print NF "HOSTNAME=localhost\n";

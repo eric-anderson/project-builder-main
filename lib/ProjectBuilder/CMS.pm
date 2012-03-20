@@ -647,7 +647,7 @@ if (defined $type) {
 	}
 }
 
-pb_log(1,"pb_cms_get_real_pkg returns $pbpkgreal\n");
+pb_log(2,"pb_cms_get_real_pkg returns $pbpkgreal\n");
 return($pbpkgreal);
 }
 

@@ -1,5 +1,5 @@
 CHROOT = /home/anderse/cache-project-builder/chroot/centos/5/x86_64
-PACKAGES = rpm-packages
+PACKAGES = suse-packages
 #CHROOT_INST = deb-chroot-inst
 CHROOT_INST = rpm-chroot-inst
 # CHROOT_INST = noop
@@ -43,6 +43,18 @@ rpm-packages:
 	rpmbuild -ba $(RPMDIR)/SPECS/perl-ProjectBuilder.spec
 	cp $(RPMDIR)/RPMS/noarch/*0.11.3.99-1.noarch.rpm /var/www/pb-rpm/RPMS
 	cd /var/www/pb-rpm && createrepo .
+
+suse-packages: 
+	-cd library && fakeroot ./debian/rules clean
+	-cd main && fakeroot ./debian/rules clean
+	ln -snf main project-builder-0.11.3.99
+	tar cvvhf - project-builder-0.11.3.99 | gzip -1v >$(RPMDIR)/SOURCES/project-builder-0.11.3.99.tar.gz
+	rpmbuild -ba $(RPMDIR)/SPECS/project-builder-suse.spec
+	ln -snf library ProjectBuilder-0.11.3.99
+	tar cvvhf - ProjectBuilder-0.11.3.99 | gzip -1v >$(RPMDIR)/SOURCES/ProjectBuilder-0.11.3.99.tar.gz
+	rpmbuild -ba $(RPMDIR)/SPECS/perl-ProjectBuilder.spec
+	cp $(RPMDIR)/RPMS/noarch/*0.11.3.99-1.noarch.rpm /var/www/pb-rpm-suse/RPMS
+	cd /var/www/pb-rpm-suse && createrepo .
 
 packages: $(PACKAGES)
 
