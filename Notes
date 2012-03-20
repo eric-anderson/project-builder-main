@@ -27,3 +27,7 @@ add rbsmirrorsrv to ~/.pbrc
 Tried -k to keep around the pbscript.### file in the chroot, but that didn't seem to work.
 --------------------------------------
 TODO: check on sbx2build
+
+TODO: check on fix to project directory name:
+ > Now your issue may be linked to that remaining point:
+ > http://trac.project-builder.org/ticket/99
