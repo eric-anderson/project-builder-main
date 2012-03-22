@@ -476,24 +476,45 @@ root directory for project-builder to use.
 
 You can then run the command:
 
-    % pb -p I<$project> -r I<$version> newproj
+    % pb -p I<$project> -r I<$version> newproj I<$project>
 
 to create the new project. Running the newproj command will then generate the file
-$pbdefdir/$project/pbconf/$version/$project.pb.  You will need to edit that file in order to run
-any of the later commands.
+$pbdefdir/$project/pbconf/$version/$project.pb, and the directory
+$pbdefdir/$project/pbconf/$version/$project.  You will need to edit those files to make the later
+commands work.  Note that you do need to specify the project twice.
 
 =head2 cms2build
 
 The cms2build command takes your files from the content management system and makes the two tar
-files that are necessary for building files.  Before running this command, you need to run the
-newproj command, and edit the $project.pb configuration file.  In particular, you need to set the
-pburl, pbrepo, pbwf, pbpackager, projver, projtag, testver, deliver, and defpkgdir lines as
-described in the configuration file.  Then you can run a command like:
+files that are necessary for building files.  You need to have run the newproj command first.  Then there are several steps for running this command:
+
+=over 4
+
+=item Update your $project.pb configuration file.
+
+You need to set the pburl, pbrepo, pbwf, pbpackager, projver, projtag, testver, delivery, and
+defpkgdir lines as described in the configuration file.  For example:
+
+    pburl Lintel = file:///home/anderse/projects/Lintel-0.2012.02.28.tar.gz
+    pbrepo Lintel = http://tesla.hpl.hp.com/opensource
+    pbwf Lintel = 1
+    pbpackager Lintel = Eric Anderson <eric.anderson4@hp.com>
+    projver Lintel = 0.2012.02.28
+    projtag Lintel = 1
+    testver Lintel = false
+    delivery Lintel = production
+    defpkgdir Lintel = Lintel-0.2012.02.28
+
+=item Create the build .tar.gz files:
+
+Then you need to take those files and create the initial tar files.  Run a command like:
 
     % pb -p $project -r $version cms2build
 
 To create the $pbdefdir/$project/delivery/$project-$version.{,pbconf}.tar.gz files, the
 $version-$projtag.pb and pbrc files in the same directory.
+
+=back
 
 =head2 build2pkg
 

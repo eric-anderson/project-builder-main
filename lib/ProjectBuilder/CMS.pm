@@ -105,7 +105,7 @@ if ($scheme =~ /^hg/) {
 	$tmp =~ s/^.* //;
 	$ENV{'PBREVISION'}=$tmp;
 	$ENV{'PBCMSLOGFILE'}="git.log";
-} elsif (($scheme =~ /^file/) || ($scheme eq "ftp") || ($scheme eq "http")) {
+} elsif ($scheme =~ /^(flat)|(ftp)|(http)|(file)\b/o) {
 	$ENV{'PBREVISION'}="flat";
 	$ENV{'PBCMSLOGFILE'}="flat.log";
 } elsif ($scheme =~ /^svn/) {
@@ -416,7 +416,8 @@ if ($scheme =~ /^svn/) {
 	$oldurl = pb_cms_mod_htftp($oldurl,"svn");
 	$newurl = pb_cms_mod_htftp($newurl,"svn");
 	pb_system("$vcscmd copy -m \"Creation of $newurl from $oldurl\" $oldurl $newurl","Copying $oldurl to $newurl ");
-} elsif (($scheme eq "flat") || ($scheme eq "ftp") || ($scheme eq "http"))   {
+} elsif ($scheme =~ /^(flat)|(ftp)|(http)|(file)\b/o) {
+        # Nothing to do.
 } else {
 	die "cms $scheme unknown for project management";
 }
@@ -492,7 +493,8 @@ if (($scheme =~ /^svn/) || ($scheme =~ /^cvs/) || ($scheme =~ /^svk/)) {
 	pb_system("$vcscmd up $dir","Updating $dir ");
 } elsif ($scheme =~ /^((hg)|(git))/o) {
         pb_system("(cd $dir && $vcscmd pull)", "Updating $dir ");
-} elsif (($scheme eq "flat") || ($scheme eq "ftp") || ($scheme eq "http"))   {
+} elsif ($scheme =~ /^(flat)|(ftp)|(http)|(file)\b/o) {
+        # Nothing to do.
 } else {
 	die "cms $scheme unknown";
 }
@@ -522,7 +524,8 @@ if (($scheme =~ /^svn/) || ($scheme =~ /^cvs/) || ($scheme =~ /^svk/)) {
 } elsif ($scheme =~ /^git/) {
         pb_system("cd $dir && $vcscmd commit -a -m \"$msg\"", "Checking in $dir ");
 # TODO: hg
-} elsif (($scheme eq "flat") || ($scheme eq "ftp") || ($scheme eq "http"))   {
+} elsif ($scheme =~ /^(flat)|(ftp)|(http)|(file)\b/o) {
+        # Nothing to do.
 } else {
 	die "cms $scheme unknown";
 }
@@ -544,7 +547,8 @@ my $vcscmd = pb_cms_cmd($scheme);
 
 if ($scheme =~ /^((hg)|(git)|(svn)|(svk)|(cvs))/) {
 	pb_system("$vcscmd add $f","Adding $f to VCS ");
-} elsif (($scheme eq "flat") || ($scheme eq "ftp") || ($scheme eq "http"))   {
+} elsif ($scheme =~ /^(flat)|(ftp)|(http)|(file)\b/o) {
+        # Nothing to do.
 } else {
 	die "cms $scheme unknown";
 }
@@ -573,7 +577,7 @@ if (($scheme =~ /^svn/) || ($scheme =~ /^cvs/) || ($scheme =~ /^svk/)) {
 		next if (/^cvs diff:/);
 		$l++;
 	}
-} elsif (($scheme eq "flat") || ($scheme eq "ftp") || ($scheme eq "http"))   {
+} elsif ($scheme =~ /^(flat)|(ftp)|(http)|(file)\b/o) {
 	$l = 0;
 } else {
 	die "cms $scheme unknown";

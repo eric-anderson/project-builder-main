@@ -63,24 +63,28 @@ status:
 	cd main && git status
 	cd rpmbootstrap && git status
 	cd $(HOME)/cache-project-builder/Lintel && git status
+	cd $(HOME)/cache-project-builder/DataSeries && git status
 
 difftool:
 	cd library && git difftool
 	cd main && git difftool
 	cd rpmbootstrap && git difftool
 	cd $(HOME)/cache-project-builder/Lintel && git difftool
+	cd $(HOME)/cache-project-builder/DataSeries && git difftool
 
 commit:
 	cd library && (git commit -a &) && sleep 1 && git difftool HEAD && wait
 	cd main && (git commit -a &) && sleep 1 && git difftool HEAD && wait
 	cd rpmbootstrap && (git commit -a &) && sleep 1 && git difftool HEAD && wait
 	cd $(HOME)/cache-project-builder/Lintel && (git commit -a &) && sleep 1 && git difftool HEAD && wait
+	cd $(HOME)/cache-project-builder/DataSeries && (git commit -a &) && sleep 1 && git difftool HEAD && wait
 
 push:
 	cd library && git push
 	cd main && git push
 	cd rpmbootstrap && git push
 	cd $(HOME)/cache-project-builder/Lintel && git push
+	cd $(HOME)/cache-project-builder/DataSeries && git push
 
 deb-chroot-inst: deb-packages
 	cp libprojectbuilder-perl_0.11.3-2_all.deb  project-builder_0.11.3-2_all.deb $(CHROOT)/tmp
