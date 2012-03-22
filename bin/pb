@@ -1393,7 +1393,7 @@ sub pb_test2pkg {
 }
 
 sub pb_build2pkg {
-
+        pb_log(0, "------ Starting to build package ------\n");
 	# Get the running distro to build on
 	my $pbos = pb_distro_get_context();
 
@@ -1766,6 +1766,7 @@ sub pb_build2pkg {
 	open(KEEP,"> $pbkeep") || die "Unable to create $pbkeep: $!";
 	print KEEP "$made\n";
 	close(KEEP);
+        pb_log(0, "------ Finished building package ------\n");
 }
 
 sub create_solaris_prototype {
@@ -2675,6 +2676,7 @@ if (defined $pbparallel) {
 	$pm->run_on_start(\&pb_set_port);
         $pm->run_on_finish(sub { my ($pid, $code, $id, $signal, $dump) = @_;
                                  unless ($code == 0 && $signal == 0 && $dump == 0) {
+                                         $all_ok = 0;
                                          print "ERROR: pid $pid failed\n";
                                  }});
 }
@@ -4284,36 +4286,23 @@ if ($pbos->{'type'} eq "rpm") {
 pb_log(2,"exiting pb_sign_pkg\n");
 }
 
-# return list of all distributins supported, coma separated
+# return list of all distributions supported, comma separated
 sub pb_get_distros {
 
 my $pbos = shift;
 my $pbtarget = shift;
 
-my $tmpl = "$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'},";
+my @dists = ("$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'}");
 
 # Get list of distributions for which we need to generate build files if no target
 if (not defined $pbtarget) {
 	my @pt = pb_conf_get_if("vmlist","velist","rmlist");
-	if (defined $pt[0]->{$ENV{'PBPROJ'}}) {
-		$tmpl .= $pt[0]->{$ENV{'PBPROJ'}};
-	}
-	if (defined $pt[1]->{$ENV{'PBPROJ'}}) {
-		# The 2 lists need to be grouped with a ',' separating them
-		if ($tmpl ne "") {
-			$tmpl .= ",";
-		}
-		$tmpl .= $pt[1]->{$ENV{'PBPROJ'}} 
-	}
-	if (defined $pt[2]->{$ENV{'PBPROJ'}}) {
-		# The lists needs to be grouped with a ',' separating them
-		if ($tmpl ne "") {
-			$tmpl .= ",";
-		}
-	$tmpl .= $pt[2]->{$ENV{'PBPROJ'}} 
-	}
+        foreach my $pt (@pt) {
+                push(@dists, split(/,/, $pt->{$ENV{PBPROJ}})) if defined $pt->{$ENV{PBPROJ}};
+        }
+        grep(s/\s+//go, @dists); # remove any whitespace
 }
-return($tmpl);
-}	
+return(join(",",@dists));
+}
 
 1;

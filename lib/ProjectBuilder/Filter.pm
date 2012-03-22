@@ -63,53 +63,27 @@ The function returns a pointer on a hash of filters.
 sub pb_get_filters {
 
 my @ffiles;
-my ($ffile00, $ffile0, $ffile1, $ffile2, $ffile3, $ffile4, $ffile5);
-my ($mfile00, $mfile0, $mfile1, $mfile2, $mfile3, $mfile4, $mfile5);
 my $pbpkg = shift || die "No package specified";
 my $pbos = shift;
 my $ptr = undef; # returned value pointer on the hash of filters
 my %h;
 
 pb_log(2,"Entering pb_get_filters - pbpkg: $pbpkg - pbos: ".Dumper($pbos)."\n");
-# Global filter files first, then package specificities
-if (-d "$ENV{'PBROOTDIR'}/pbfilter") {
-	$mfile00 = "$ENV{'PBROOTDIR'}/pbfilter/all.pbf" if (-f "$ENV{'PBROOTDIR'}/pbfilter/all.pbf");
-	if (defined $pbos) {
-		$mfile0 = "$ENV{'PBROOTDIR'}/pbfilter/$pbos->{'os'}.pbf" if ((defined $pbos->{'os'}) && (-f "$ENV{'PBROOTDIR'}/pbfilter/$pbos->{'os'}.pbf"));
-		$mfile1 = "$ENV{'PBROOTDIR'}/pbfilter/$pbos->{'type'}.pbf" if ((defined $pbos->{'type'}) && (-f "$ENV{'PBROOTDIR'}/pbfilter/$pbos->{'type'}.pbf"));
-		$mfile2 = "$ENV{'PBROOTDIR'}/pbfilter/$pbos->{'family'}.pbf" if ((defined $pbos->{'family'}) && (-f "$ENV{'PBROOTDIR'}/pbfilter/$pbos->{'family'}.pbf"));
-		$mfile3 = "$ENV{'PBROOTDIR'}/pbfilter/$pbos->{'name'}.pbf" if ((defined $pbos->{'name'}) && (-f "$ENV{'PBROOTDIR'}/pbfilter/$pbos->{'name'}.pbf"));
-		$mfile4 = "$ENV{'PBROOTDIR'}/pbfilter/$pbos->{'name'}-$pbos->{'version'}.pbf" if ((defined $pbos->{'name'}) && (defined $pbos->{'version'}) && (-f "$ENV{'PBROOTDIR'}/pbfilter/$pbos->{'name'}-$pbos->{'version'}.pbf"));
-		$mfile5 = "$ENV{'PBROOTDIR'}/pbfilter/$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'}.pbf" if ((defined $pbos->{'name'}) && (defined $pbos->{'version'}) && (defined $pbos->{'arch'}) && (-f "$ENV{'PBROOTDIR'}/pbfilter/$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'}.pbf"));
-	}
-
-	push @ffiles,$mfile00 if (defined $mfile00);
-	push @ffiles,$mfile0 if (defined $mfile0);
-	push @ffiles,$mfile1 if (defined $mfile1);
-	push @ffiles,$mfile2 if (defined $mfile2);
-	push @ffiles,$mfile3 if (defined $mfile3);
-	push @ffiles,$mfile4 if (defined $mfile4);
-	push @ffiles,$mfile5 if (defined $mfile5);
+# Global filter files first, then package specific
+my @file_basenames;
+if (defined $pbos) {
+    @file_basenames = reverse pb_pbos_to_keylist($pbos, 'all');
+} else {
+    @file_basenames = ('all');
 }
 
-if (-d "$ENV{'PBROOTDIR'}/$pbpkg/pbfilter") {
-	$ffile00 = "$ENV{'PBROOTDIR'}/$pbpkg/pbfilter/all.pbf" if (-f "$ENV{'PBROOTDIR'}/$pbpkg/pbfilter/all.pbf");
-	if (defined $pbos) {
-		$ffile0 = "$ENV{'PBROOTDIR'}/$pbpkg/pbfilter/$pbos->{'os'}.pbf" if ((defined $pbos->{'os'}) && (-f "$ENV{'PBROOTDIR'}/$pbpkg/pbfilter/$pbos->{'os'}.pbf"));
-		$ffile1 = "$ENV{'PBROOTDIR'}/$pbpkg/pbfilter/$pbos->{'type'}.pbf" if ((defined $pbos->{'type'}) && (-f "$ENV{'PBROOTDIR'}/$pbpkg/pbfilter/$pbos->{'type'}.pbf"));
-		$ffile2 = "$ENV{'PBROOTDIR'}/$pbpkg/pbfilter/$pbos->{'family'}.pbf" if ((defined $pbos->{'family'}) && (-f "$ENV{'PBROOTDIR'}/$pbpkg/pbfilter/$pbos->{'family'}.pbf"));
-		$ffile3 = "$ENV{'PBROOTDIR'}/$pbpkg/pbfilter/$pbos->{'name'}.pbf" if ((defined $pbos->{'name'}) && (-f "$ENV{'PBROOTDIR'}/$pbpkg/pbfilter/$pbos->{'name'}.pbf"));
-		$ffile4 = "$ENV{'PBROOTDIR'}/$pbpkg/pbfilter/$pbos->{'name'}-$pbos->{'version'}.pbf" if ((defined $pbos->{'name'}) && (defined $pbos->{'version'}) && (-f "$ENV{'PBROOTDIR'}/$pbpkg/pbfilter/$pbos->{'name'}-$pbos->{'version'}.pbf"));
-		$ffile5 = "$ENV{'PBROOTDIR'}/$pbpkg/pbfilter/$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'}.pbf" if ((defined $pbos->{'name'}) && (defined $pbos->{'version'}) && (defined $pbos->{'arch'}) && (-f "$ENV{'PBROOTDIR'}/$pbpkg/pbfilter/$pbos->{'name'}-$pbos->{'version'}-$pbos->{'arch'}.pbf"));
-	}
-	push @ffiles,$ffile00 if (defined $ffile00);
-	push @ffiles,$ffile0 if (defined $ffile0);
-	push @ffiles,$ffile1 if (defined $ffile1);
-	push @ffiles,$ffile2 if (defined $ffile2);
-	push @ffiles,$ffile3 if (defined $ffile3);
-	push @ffiles,$ffile4 if (defined $ffile4);
-	push @ffiles,$ffile5 if (defined $ffile5);
+foreach my $dir ("$ENV{PBROOTDIR}/pbfilter", "$ENV{PBROOTDIR}/$pbpkg/pbfilter") {
+    foreach my $file_basename (@file_basenames) {
+        my $path = "$dir/${file_basename}.pbf";
+        push(@ffiles, $path) if -f $path;
+    }
 }
+
 if (@ffiles) {
 	pb_log(2,"DEBUG ffiles: ".Dumper(\@ffiles)."\n");
 

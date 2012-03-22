@@ -1,5 +1,5 @@
-CHROOT = /home/anderse/cache-project-builder/chroot/centos/5/x86_64
-PACKAGES = suse-packages
+CHROOT = /home/anderse/cache-project-builder/chroot/scilinux/6/i386
+PACKAGES = rpm-packages
 #CHROOT_INST = deb-chroot-inst
 CHROOT_INST = rpm-chroot-inst
 # CHROOT_INST = noop
@@ -29,7 +29,7 @@ deb-packages:
 	-cd main && fakeroot ./debian/rules clean
 	cd library && dpkg-buildpackage -us -uc
 	cd main && dpkg-buildpackage -us -uc
-	cp libproj*.* project-build*.* /var/www/pb-deb/pool
+	cp libproj*.* project-build*.*-* /var/www/pb-deb/pool
 	cd /var/www/pb-deb && make
 
 rpm-packages:
@@ -61,21 +61,25 @@ packages: $(PACKAGES)
 status:
 	cd library && git status
 	cd main && git status
+	cd rpmbootstrap && git status
 	cd $(HOME)/cache-project-builder/Lintel && git status
 
 difftool:
 	cd library && git difftool
 	cd main && git difftool
+	cd rpmbootstrap && git difftool
 	cd $(HOME)/cache-project-builder/Lintel && git difftool
 
 commit:
 	cd library && (git commit -a &) && sleep 1 && git difftool HEAD && wait
 	cd main && (git commit -a &) && sleep 1 && git difftool HEAD && wait
+	cd rpmbootstrap && (git commit -a &) && sleep 1 && git difftool HEAD && wait
 	cd $(HOME)/cache-project-builder/Lintel && (git commit -a &) && sleep 1 && git difftool HEAD && wait
 
 push:
 	cd library && git push
 	cd main && git push
+	cd rpmbootstrap && git push
 	cd $(HOME)/cache-project-builder/Lintel && git push
 
 deb-chroot-inst: deb-packages
