@@ -493,7 +493,14 @@ files that are necessary for building files.  You need to have run the newproj c
 =item Update your $project.pb configuration file.
 
 You need to set the pburl, pbrepo, pbwf, pbpackager, projver, projtag, testver, delivery, and
-defpkgdir lines as described in the configuration file.  For example:
+defpkgdir lines as described in the configuration file.  The pburl entry is used to find the source
+for your package.  The pbrepo entry is used to build the .repo or .sources.list files for use by
+downloaders of the package.  The pbwf entry indicates that the source tar file is named by
+I<package-name>-I<version>.  The pbpackager entry will be stored in the packages and should be you
+or your team.  The projver/projtag entries indicate the version of the software and the version of
+the packaging scripts.  The testver, delivery, and defpkgdir entries mean TODO-reviewer: ???.
+
+For example:
 
     pburl Lintel = file:///home/anderse/projects/Lintel-0.2012.02.28.tar.gz
     pbrepo Lintel = http://tesla.hpl.hp.com/opensource
@@ -2148,18 +2155,22 @@ EOF
 			my $rpd = dirname("$pbrepo->{$ENV{'PBPROJ'}}/$repodir");
 			# Remove extra . in path to fix #522
 			$rpd =~ s|/./|/|g;
+                        my ($pbdebcomponent_map) = pb_conf_get_if("pbdebcomponent");
+                        print Dumper($pbdebcomponent_map);
+                        my $pbdebcomponent = $pbdebcomponent_map->{$ENV{PBPROJ}};
+                        $pbdebcomponent ||= 'contrib';
 			print PBS << "EOF";
 #!/bin/bash
 # Prepare a script to ease apt setup
 cat > $ENV{'PBPROJ'}.sources.list << EOT
-deb $rpd $pbos->{'version'} contrib
-deb-src $rpd $pbos->{'version'} contrib
+deb $rpd $pbos->{'version'} $pbdebcomponent
+deb-src $rpd $pbos->{'version'} $pbdebcomponent
 EOT
 chmod 644 $ENV{'PBPROJ'}.sources.list
 
 # Up two levels to deal with the dist dir cross versions
 cd ..
-mkdir -p dists/$pbos->{'version'}/contrib/binary-$debarch dists/$pbos->{'version'}/contrib/source
+mkdir -p dists/$pbos->{'version'}/$pbdebcomponent/binary-$debarch dists/$pbos->{'version'}/$pbdebcomponent/source
 
 # Prepare a script to create apt info file
 # Reuse twice after
@@ -2167,23 +2178,23 @@ TMPD=`mktemp -d /tmp/pb.XXXXXXXXXX` || exit 1
 mkdir -p \$TMPD
 cat > \$TMPD/Release << EOT
 Archive: unstable
-Component: contrib
+Component: $pbdebcomponent
 Origin: $ENV{'PBPROJ'}
 Label: $ENV{'PBPROJ'} dev repository $pbrepo->{$ENV{'PBPROJ'}}
 EOT
 
 echo "Creating Packages metadata ($pbos->{'arch'} aka $debarch)"
-dpkg-scanpackages -a$debarch $pbos->{'version'} /dev/null | gzip -c9 > dists/$pbos->{'version'}/contrib/binary-$debarch/Packages.gz
-dpkg-scanpackages -a$debarch $pbos->{'version'} /dev/null | bzip2 -c9 > dists/$pbos->{'version'}/contrib/binary-$debarch/Packages.bz2
+dpkg-scanpackages -a$debarch $pbos->{'version'} /dev/null | gzip -c9 > dists/$pbos->{'version'}/$pbdebcomponent/binary-$debarch/Packages.gz
+dpkg-scanpackages -a$debarch $pbos->{'version'} /dev/null | bzip2 -c9 > dists/$pbos->{'version'}/$pbdebcomponent/binary-$debarch/Packages.bz2
 echo "Creating Contents metadata"
 apt-ftparchive contents $pbos->{'version'} | gzip -c9 > dists/$pbos->{'version'}/Contents.gz
 echo "Creating Release metadata ($pbos->{'arch'} aka $debarch)"
-cat \$TMPD/Release > dists/$pbos->{'version'}/contrib/binary-$debarch/Release
-echo "Architecture: $debarch" >> dists/$pbos->{'version'}/contrib/binary-$debarch/Release
+cat \$TMPD/Release > dists/$pbos->{'version'}/$pbdebcomponent/binary-$debarch/Release
+echo "Architecture: $debarch" >> dists/$pbos->{'version'}/$pbdebcomponent/binary-$debarch/Release
 echo "Creating Source metadata"
-dpkg-scansources $pbos->{'version'} /dev/null | gzip -c9 > dists/$pbos->{'version'}/contrib/source/Sources.gz
-cat \$TMPD/Release > dists/$pbos->{'version'}/contrib/source/Release
-echo "Architecture: Source" >> dists/$pbos->{'version'}/contrib/source/Release
+dpkg-scansources $pbos->{'version'} /dev/null | gzip -c9 > dists/$pbos->{'version'}/$pbdebcomponent/source/Sources.gz
+cat \$TMPD/Release > dists/$pbos->{'version'}/$pbdebcomponent/source/Release
+echo "Architecture: Source" >> dists/$pbos->{'version'}/$pbdebcomponent/source/Release
 echo "Creating Release metadata"
 # Signing that file would be useful but uneasy as gpg keys are not there
 # Cf: http://wiki.debian.org/SecureApt
