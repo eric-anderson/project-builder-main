@@ -1,8 +1,8 @@
 CHROOT = /home/anderse/cache-project-builder/chroot/debian/7.0/i386
 PACKAGES = rpm-packages
-CHROOT_INST = deb-chroot-inst
+#CHROOT_INST = deb-chroot-inst
 #CHROOT_INST = rpm-chroot-inst
-#CHROOT_INST = noop
+CHROOT_INST = noop
 RPMDIR = $(HOME)/projects/special-build/rpms
 
 help:

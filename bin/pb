@@ -2031,12 +2031,14 @@ sub pb_send2target {
 		my $repodir = $tdir;
 		$repodir =~ s|^$remdir/||;
 
-		my ($pbrepo) = pb_conf_get("pbrepo");
+		my ($pbrepo, $pbgpgcheck_map) = pb_conf_get("pbrepo", "pbgpgcheck");
 
 		# Repository management
 		open(PBS,"> $ENV{'PBBUILDDIR'}/pbscript.$$") || die "Unable to create $ENV{'PBBUILDDIR'}/pbscript.$$";
 		if ($pbos->{'type'} eq "rpm") {
 			my $pbsha = pb_distro_get_param($pbos,pb_conf_get("ossha"));
+                        my $pbgpgcheck = $pbgpgcheck_map->{$ENV{PBPROJ}};
+                        $pbgpgcheck = 1 unless defined $pbgpgcheck; # TODO-reviewer: I think this should be 0 since by default failure to sign is tolerated, but this choice preserves the old behavior.
 			# Also make a pbscript to generate yum/urpmi bases
 			print PBS << "EOF";
 #!/bin/bash
@@ -2049,7 +2051,7 @@ cat > $ENV{'PBPROJ'}.repo << EOT
 name=$pbos->{'name'} $pbos->{'version'} $pbos->{'arch'} - $ENV{'PBPROJ'} Vanilla Packages
 baseurl=$pbrepo->{$ENV{'PBPROJ'}}/$repodir
 enabled=1
-gpgcheck=1
+gpgcheck=$pbgpgcheck
 gpgkey=$pbrepo->{$ENV{'PBPROJ'}}/$repodir/$ENV{'PBPROJ'}.pubkey
 EOT
 chmod 644 $ENV{'PBPROJ'}.repo
