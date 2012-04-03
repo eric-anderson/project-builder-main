@@ -2065,7 +2065,11 @@ fi
 # Create repodata
 createrepo -s $pbsha .
 # Link to the key
-(cd repodata ; ln -sf ../$ENV{'PBPROJ'}.pubkey repomd.xml.key)
+if [ -s $ENV{'PBPROJ'}.pubkey ]; then
+    (cd repodata ; ln -sf ../$ENV{'PBPROJ'}.pubkey repomd.xml.key)
+else
+    echo "Avoiding creating empty repomd.xml.key; fails on opensuse 12.1"
+fi
 # sign the repomd (at least useful for SLES - which requires a local key)
 # gpg -a --detach-sign repodata/repomd.xml
 # SLES also looks for media.1/info.txt
