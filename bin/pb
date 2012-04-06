@@ -17,7 +17,7 @@ use lib '/usr/share/perl5'; # force opensuse to have this in the library path; 1
 # Additional required modules only used locally are called with a require
 # in their respective section
 use Getopt::Long qw(:config auto_abbrev no_ignore_case);
-use Carp 'cluck';
+use Carp qw/confess cluck/;
 use Data::Dumper;
 use English;
 use File::Basename;
@@ -1116,7 +1116,7 @@ sub pb_cms2build {
                         my $all_ok = 1;
 			my $pm = new Parallel::ForkManager($pbparallel) if (defined $pbparallel);
                         $pm->run_on_finish(sub { my ($pid, $code, $id, $signal, $dump) = @_;
-                                                 $all_ok = 0 unless $code == 0 && $signal == 0 && $dump == 0; });
+                                                 $all_ok = 0 unless $code == 0 && $signal == 0 && $dump == 0; }) if defined $pbparallel;
 
 			pb_log(0,"Preparing delivery ...\n");
 			foreach my $v (keys %virt) {
@@ -2233,7 +2233,9 @@ EOF
 	my $nport = pb_get_port($sshport,$pbos,$cmt) if ($cmt !~ /^VE/);
 
 	# Remove a potential $ENV{'HOME'} as tdir should be relative to pb's home
-	$tdir =~ s|\$ENV.+\}/||;
+        if ($cmt =~ /^VE/o) {
+            $tdir =~ s|\$ENV.+\}/|| or confess "for $cmt: $tdir must have \$ENV{'HOME'} in it or the remainder of the code won't work since some parts use relative pathing and others will try absolute.  Use a symlink if necessary to place the real files in a different place than under your home directory";
+        }
 
 	my $tm = "";
 	if ($cmt =~ /^(V|R)M/) {
@@ -4317,7 +4319,7 @@ if ($pbos->{'type'} eq "rpm") {
 	}
 	my $debsigncmd = pb_check_req("debsign",1);
 	pb_system("$debsigncmd -m\'$ENV{'PBPACKAGER'}\' $changes","Signing DEB packages", '', 1)
-            if $changes ne '';
+            if $changes ne '' && defined $debsigncmd;
 } else {
 	pb_log(0,"I don't know yet how to sign packages for type $pbos->{'type'}.\nPlease give feedback to dev team\n");
 }

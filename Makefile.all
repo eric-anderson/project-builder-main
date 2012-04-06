@@ -1,20 +1,43 @@
-CHROOT = /home/anderse/cache-project-builder/chroot/debian/7.0/i386
+# -*- Makefile -*-
+PB_ROOT := $(shell grep '^pbdefdir' $(HOME)/.pbrc | awk '{print $$4}' | sed 's,\$$ENV{.HOME.},$(HOME),')
+
+CHROOT = $(PB_ROOT)/chroot/debian/7.0/i386
 PACKAGES = rpm-packages
 #CHROOT_INST = deb-chroot-inst
 #CHROOT_INST = rpm-chroot-inst
 CHROOT_INST = noop
-RPMDIR = $(HOME)/projects/special-build/rpms
+RPMDIR = $(PROJECTS)/special-build/rpms
+
 
 help:
-	@echo "make all # both local and chroot-inst"
+	@echo "make prep # prepare environment for stuff, assumes debian OS"
+	@echo "make all # local deb-packages rpm-packages suse-packages and chroot-inst"
 	@echo "make local"
 	@echo "make chroot-inst"
 	@echo "make status"
 	@echo "make difftool"
 	@echo "make commit"
 	@echo "make push"
+	@echo "PB_ROOT=$(PB_ROOT)"
 
-all: local chroot-inst
+all: local deb-packages rpm-packages suse-packages chroot-inst
+
+prep:
+	# other packages probably needed
+	sudo aptitude install debootstrap libfile-mimeinfo-perl createrepo rpm apache2 libdate-manip-perl
+	sudo mkdir -p /var/www/pb-deb/pool /var/www/pb-rpm/RPMS /var/www/pb-rpm-suse/RPMS /var/www/pb-sources
+	sudo chown -R anderse /var/www/pb-deb /var/www/pb-rpm /var/www/pb-rpm-suse /var/www/pb-sources
+	cp main/Makefile.debian.repo /var/www/pb-deb/Makefile
+	cp main/Release.config.debian /var/www/pb-deb/Release.config
+	echo 'deb http://localhost/pb-deb ./' >/var/www/pb-deb/pb.sources.list
+	cp main/pb.sources.repo /var/www/pb-rpm/pb.sources.repo
+	cp main/pb.sources.repo.suse /var/www/pb-rpm-suse/pb.sources.repo
+	sudo ln -sfn $(PB_ROOT)/repos /var/www/pb-pkgs
+	sudo mkdir -p /usr/local/lib/site_perl
+	[ `find $(BUILD_OPT)/share/perl -name ProjectBuilder | wc -l` = 1 ]
+	sudo ln -sfn `find $(BUILD_OPT)/share/perl -name ProjectBuilder` /usr/local/lib/site_perl/ProjectBuilder
+	mkdir -p $(RPMDIR)/SOURCES $(RPMDIR)/SPECS
+	cp main/specs/* $(RPMDIR)/SPECS
 
 noop:
 
@@ -23,6 +46,7 @@ local:
 		(cd $$i && perl Makefile.PL PREFIX=$$BUILD_OPT && make && make install); \
 	done
 	[ `pb --help 2>&1 | grep 'Version PBVER-PBREV' | wc -l` = 1 ]
+	[ `rpmbootstrap --help 2>&1 | grep 'Version PBVER-PBREV' | wc -l` = 1 ]
 
 deb-packages:
 	-cd library && fakeroot ./debian/rules clean
@@ -62,29 +86,29 @@ status:
 	cd library && git status
 	cd main && git status
 	cd rpmbootstrap && git status
-	cd $(HOME)/cache-project-builder/Lintel && git status
-	cd $(HOME)/cache-project-builder/DataSeries && git status
+	cd $(PB_ROOT)/Lintel && git status
+	cd $(PB_ROOT)/DataSeries && git status
 
 difftool:
 	cd library && git difftool
 	cd main && git difftool
 	cd rpmbootstrap && git difftool
-	cd $(HOME)/cache-project-builder/Lintel && git difftool
-	cd $(HOME)/cache-project-builder/DataSeries && git difftool
+	cd $(PB_ROOT)/Lintel && git difftool
+	cd $(PB_ROOT)/DataSeries && git difftool
 
 commit:
 	cd library && (git commit -a &) && sleep 1 && git difftool HEAD && wait
 	cd main && (git commit -a &) && sleep 1 && git difftool HEAD && wait
 	cd rpmbootstrap && (git commit -a &) && sleep 1 && git difftool HEAD && wait
-	cd $(HOME)/cache-project-builder/Lintel && (git commit -a &) && sleep 1 && git difftool HEAD && wait
-	cd $(HOME)/cache-project-builder/DataSeries && (git commit -a &) && sleep 1 && git difftool HEAD && wait
+	cd $(PB_ROOT)/Lintel && (git commit -a &) && sleep 1 && git difftool HEAD && wait
+	cd $(PB_ROOT)/DataSeries && (git commit -a &) && sleep 1 && git difftool HEAD && wait
 
 push:
 	cd library && git push
 	cd main && git push
 	cd rpmbootstrap && git push
-	cd $(HOME)/cache-project-builder/Lintel && git push
-	cd $(HOME)/cache-project-builder/DataSeries && git push
+	cd $(PB_ROOT)/Lintel && git push
+	cd $(PB_ROOT)/DataSeries && git push
 
 deb-chroot-inst: deb-packages
 	cp libprojectbuilder-perl_0.11.3-2_all.deb  project-builder_0.11.3-2_all.deb $(CHROOT)/tmp
