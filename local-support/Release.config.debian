@@ -1,0 +1,7 @@
+APT::FTPArchive::Release {
+    Origin "PA-INSTALL-anderse";
+    Label "Debian repository for UCS user anderse";
+    Suite "custom";
+    Architectures "amd64 i386";
+    Description "Packages related to projects of UCS user anderse";
+}

@@ -1,0 +1,5 @@
+[pb]
+name=pb packages
+baseurl=http://localhost/pb-rpm-suse
+enabled=1
+gpgcheck=0

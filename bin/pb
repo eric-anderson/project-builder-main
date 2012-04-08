@@ -2189,9 +2189,13 @@ Origin: $ENV{'PBPROJ'}
 Label: $ENV{'PBPROJ'} dev repository $pbrepo->{$ENV{'PBPROJ'}}
 EOT
 
-echo "Creating Packages metadata ($pbos->{'arch'} aka $debarch)"
-dpkg-scanpackages -a$debarch $pbos->{'version'} /dev/null | gzip -c9 > dists/$pbos->{'version'}/$pbdebcomponent/binary-$debarch/Packages.gz
-dpkg-scanpackages -a$debarch $pbos->{'version'} /dev/null | bzip2 -c9 > dists/$pbos->{'version'}/$pbdebcomponent/binary-$debarch/Packages.bz2
+echo "Creating Packages metadata"
+for i in dists/$pbos->{version}/$pbdebcomponent/binary-*; do
+    arch=`basename \$i | sed 's/binary-//'`
+    echo "Packages for \$arch:"
+    dpkg-scanpackages -a\$arch $pbos->{'version'} /dev/null | gzip -c9 > dists/$pbos->{'version'}/$pbdebcomponent/binary-\$arch/Packages.gz
+    dpkg-scanpackages -a\$arch $pbos->{'version'} /dev/null | bzip2 -c9 > dists/$pbos->{'version'}/$pbdebcomponent/binary-\$arch/Packages.bz2
+done
 echo "Creating Contents metadata"
 apt-ftparchive contents $pbos->{'version'} | gzip -c9 > dists/$pbos->{'version'}/Contents.gz
 echo "Creating Release metadata ($pbos->{'arch'} aka $debarch)"
@@ -2235,6 +2239,8 @@ EOF
 	# Remove a potential $ENV{'HOME'} as tdir should be relative to pb's home
         if ($cmt =~ /^VE/o) {
             $tdir =~ s|\$ENV.+\}/|| or confess "for $cmt: $tdir must have \$ENV{'HOME'} in it or the remainder of the code won't work since some parts use relative pathing and others will try absolute.  Use a symlink if necessary to place the real files in a different place than under your home directory";
+        } else {
+            $tdir =~ s|\$ENV.+\}/||; # process, ok if not present.
         }
 
 	my $tm = "";

@@ -1,0 +1,28 @@
+update: Release
+
+Packages: FORCE
+	apt-ftparchive packages pool >$@-new
+	mv $@-new $@
+
+Sources: FORCE
+	apt-ftparchive sources pool >$@-new
+	mv $@-new $@
+
+%.gz: %
+	gzip -9v < $< >$@-new
+	mv $@-new $@
+
+Release: Packages.gz Sources.gz
+	apt-ftparchive -c=Release.config release . >$@-new
+	mv $@-new $@
+
+Release.gpg: Release
+	#HOME=/home/anderse gpg --sign -ba -o $@-new $<
+	touch $@-new
+	mv $@-new $@
+
+clean:
+	rm Packages.gz Sources.gz
+
+FORCE:
+

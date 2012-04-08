@@ -27,17 +27,20 @@ prep:
 	sudo aptitude install debootstrap libfile-mimeinfo-perl createrepo rpm apache2 libdate-manip-perl
 	sudo mkdir -p /var/www/pb-deb/pool /var/www/pb-rpm/RPMS /var/www/pb-rpm-suse/RPMS /var/www/pb-sources
 	sudo chown -R anderse /var/www/pb-deb /var/www/pb-rpm /var/www/pb-rpm-suse /var/www/pb-sources
-	cp main/Makefile.debian.repo /var/www/pb-deb/Makefile
-	cp main/Release.config.debian /var/www/pb-deb/Release.config
+	cp main/local-support/Makefile.debian.repo /var/www/pb-deb/Makefile
+	cp main/local-support/Release.config.debian /var/www/pb-deb/Release.config
 	echo 'deb http://localhost/pb-deb ./' >/var/www/pb-deb/pb.sources.list
-	cp main/pb.sources.repo /var/www/pb-rpm/pb.sources.repo
-	cp main/pb.sources.repo.suse /var/www/pb-rpm-suse/pb.sources.repo
+	cp main/local-support/pb.sources.repo /var/www/pb-rpm/pb.sources.repo
+	cp main/local-support/pb.sources.repo.suse /var/www/pb-rpm-suse/pb.sources.repo
 	sudo ln -sfn $(PB_ROOT)/repos /var/www/pb-pkgs
 	sudo mkdir -p /usr/local/lib/site_perl
 	[ `find $(BUILD_OPT)/share/perl -name ProjectBuilder | wc -l` = 1 ]
 	sudo ln -sfn `find $(BUILD_OPT)/share/perl -name ProjectBuilder` /usr/local/lib/site_perl/ProjectBuilder
 	mkdir -p $(RPMDIR)/SOURCES $(RPMDIR)/SPECS
-	cp main/specs/* $(RPMDIR)/SPECS
+	cp main/local-support/specs/* $(RPMDIR)/SPECS
+	for i in oneiric precise; do \
+	    [ -f /usr/share/debootstrap/scripts/$$i ] || sudo ln -s gutsy /usr/share/debootstrap/scripts/$$i || exit 1; \
+	done
 
 noop:
 
